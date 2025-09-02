@@ -1,0 +1,22 @@
+[
+  {
+    "type": "gauge",
+    "topic": "temp-ute",
+    "value": 14.2
+  },
+  {
+    "type": "slider",
+    "topic": "lys kontor",
+    "value": 0
+  },
+  {
+    "type": "gauge",
+    "topic": "total_effekt",
+    "value": 6406.0
+  },
+  {
+    "type": "label",
+    "topic": "total_effekt",
+    "value": "6147"
+  }
+]

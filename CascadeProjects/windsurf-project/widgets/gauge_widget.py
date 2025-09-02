@@ -5,8 +5,8 @@ import math
 from .base_widget import BaseWidget
 
 class GaugeWidget(BaseWidget):
-    def __init__(self, topic, min_val=0, max_val=100, initial_val=0, parent=None):
-        super().__init__("gauge", topic, parent)
+    def __init__(self, topic, min_val=0, max_val=100, initial_val=0, mqtt_client=None, parent=None):
+        super().__init__("gauge", topic, mqtt_client, parent)
         self.min_val = float(min_val)
         self.max_val = float(max_val)
         self.value = float(initial_val)
@@ -15,7 +15,7 @@ class GaugeWidget(BaseWidget):
         self.setMinimumSize(120, 80)
         
         # Create value label
-        self.value_label = QLabel(str(initial_val))
+        self.value_label = QLabel(f"{initial_val:.1f}")
         self.value_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.value_label.setStyleSheet("""
             QLabel {
@@ -29,11 +29,15 @@ class GaugeWidget(BaseWidget):
         self.content_layout.addStretch(1)
         self.content_layout.addWidget(self.value_label, 0, Qt.AlignmentFlag.AlignCenter)
         self.content_layout.addStretch(1)
+        
+        # Connect to MQTT if available
+        if mqtt_client:
+            mqtt_client.message_received.connect(self.on_message_received)
     
     def paintEvent(self, event):
         """Draw the gauge"""
         painter = QPainter(self)
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing) 
         
         # Calculate dimensions
         width = self.width()
@@ -41,6 +45,9 @@ class GaugeWidget(BaseWidget):
         size = min(width, height * 1.5)
         x = (width - size) // 2
         y = 0
+        
+        # Initialize ratio with default value (0.0)
+        ratio = 0.0
         
         # Draw the gauge background
         pen = QPen(QColor(200, 200, 200), 2)
@@ -90,21 +97,49 @@ class GaugeWidget(BaseWidget):
             painter.drawEllipse(center, 5, 5)
     
     def on_message_received(self, topic, message):
-        """Handle incoming MQTT messages"""
-        if topic == self.topic:
-            try:
-                self.set_value(float(message))
-            except (ValueError, TypeError):
-                pass
+        try:
+            print(f"[GAUGE DEBUG] Received message - Topic: {topic}, Message: {message}")
+            print(f"[GAUGE DEBUG] Widget topic: {self.topic}")
+            
+            # Check if this message is for this widget's topic
+            if topic == self.topic:
+                print("[GAUGE DEBUG] Topic matches widget's subscription")
+                try:
+                    value = float(message)
+                    print(f"[GAUGE DEBUG] Converted message to float: {value}")
+                    print(f"[GAUGE DEBUG] Current value: {self.value}, New value: {value}")
+                    self.set_value(value)
+                    print("[GAUGE DEBUG] Value set successfully")
+                except ValueError as e:
+                    print(f"[GAUGE ERROR] Could not convert message to float: {message}. Error: {str(e)}")
+            else:
+                print(f"[GAUGE DEBUG] Ignoring message - topic doesn't match widget's topic")
+                
+        except Exception as e:
+            print(f"[GAUGE ERROR] Unexpected error in on_message_received: {str(e)}")
+            import traceback
+            traceback.print_exc()
     
     def set_value(self, value):
         """Set the gauge value and update the display"""
         try:
-            self.value = float(value)
+            # Ensure value is within min/max bounds
+            self.value = max(self.min_val, min(self.max_val, float(value)))
+            print(f"[DEBUG] GaugeWidget value set to: {self.value}")
+            
+            # Update the label text
             self.value_label.setText(f"{self.value:.1f}")
-            self.update()  # Trigger a repaint
-        except (ValueError, TypeError):
-            pass
+            
+            # Force a repaint of the widget
+            self.update()
+            
+            # Ensure the widget is visible and properly updated
+            if not self.isVisible():
+                print("[WARNING] GaugeWidget is not visible!")
+                self.show()
+                
+        except Exception as e:
+            print(f"[ERROR] Error in set_value: {str(e)}")
     
     def get_value(self):
         """Return the current gauge value"""

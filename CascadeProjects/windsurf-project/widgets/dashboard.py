@@ -2,18 +2,14 @@ from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QLa
                            QPushButton, QScrollArea, QFrame, QSizePolicy,
                            QComboBox, QLineEdit, QMessageBox, QInputDialog,
                            QMenu, QMenuBar, QFileDialog, QDialog, QDialogButtonBox)
-from PyQt6.QtCore import Qt, pyqtSignal, QSize, QPoint, QMimeData
+from PyQt6.QtCore import Qt, pyqtSignal, QSize, QPoint, QMimeData, QRect
 from PyQt6.QtGui import QDrag, QPixmap, QPainter, QColor, QAction, QFont, QPen, QBrush, QConicalGradient
 import json
 import os
 import math
 
 # Import widget classes
-from .base_widget import BaseWidget
-from .label_widget import LabelWidget
-from .button_widget import ButtonWidget
-from .slider_widget import SliderWidget
-from .gauge_widget import GaugeWidget
+from .grid_container import GridContainer
 
 class Dashboard(QWidget):
     def __init__(self, mqtt_client, parent=None):
@@ -22,26 +18,19 @@ class Dashboard(QWidget):
         self.widgets = []
         self.subscribed_topics = set()
         self.current_layout_file = None
-        
-        # Set up the main widget and layout
+        self.grid_size = 20
+        self.show_grid = True
+        self.presentation_mode = False
         self.setAcceptDrops(True)
         self.setAutoFillBackground(True)
-        palette = self.palette()
-        palette.setColor(self.backgroundRole(), QColor(240, 240, 240))
-        self.setPalette(palette)
+        
+        # Create main container without grid layout - use absolute positioning
+        self.container = GridContainer(self.grid_size)
+        self.container.setMinimumSize(1200, 800)
         
         # Create a scroll area for the dashboard
         self.scroll = QScrollArea()
         self.scroll.setWidgetResizable(True)
-        
-        # Container widget that will hold the grid layout
-        self.container = QWidget()
-        self.grid_layout = QGridLayout(self.container)
-        self.grid_layout.setSpacing(10)
-        self.grid_layout.setContentsMargins(10, 10, 10, 10)
-        self.grid_layout.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft)
-        
-        # Set the container as the widget in the scroll area
         self.scroll.setWidget(self.container)
         
         # Add the scroll area to the main layout
@@ -80,82 +69,392 @@ class Dashboard(QWidget):
             if widget_type and topic:
                 self.add_widget(widget_type, topic)
     
-    def add_widget(self, widget_type, topic, row=None, col=None, **kwargs):
+    def add_widget(self, widget_type, topic, x=None, y=None, **kwargs):
         """Add a widget to the dashboard
         
         Args:
             widget_type: Type of widget to add ('label', 'button', 'slider', 'gauge')
             topic: MQTT topic to subscribe to
-            row: Grid row position (optional, will find next available if not specified)
-            col: Grid column position (optional, will find next available if not specified)
+            x: X-coordinate of the widget position (optional, will find next available if not specified)
+            y: Y-coordinate of the widget position (optional, will find next available if not specified)
             **kwargs: Additional arguments for the widget constructor
             
         Returns:
             The created widget or None if creation failed
         """
-        print(f"[DEBUG] Adding widget: type={widget_type}, topic={topic}, row={row}, col={col}, kwargs={kwargs}")
+        print(f"[DEBUG] Adding widget: type={widget_type}, topic={topic}, x={x}, y={y}, kwargs={kwargs}")
         try:
-            # Create the appropriate widget
-            print(f"[DEBUG] Creating widget of type: {widget_type}")
-            try:
-                if widget_type == 'label':
-                    print("[DEBUG] Creating LabelWidget")
-                    widget = LabelWidget(topic, **kwargs)
-                elif widget_type == 'button':
-                    print("[DEBUG] Creating ButtonWidget")
-                    widget = ButtonWidget(topic, **kwargs)
-                elif widget_type == 'slider':
-                    print("[DEBUG] Creating SliderWidget")
-                    widget = SliderWidget(topic, **kwargs)
-                elif widget_type == 'gauge':
-                    print("[DEBUG] Creating GaugeWidget")
-                    widget = GaugeWidget(topic, **kwargs)
-                else:
-                    error_msg = f"Unknown widget type: {widget_type}"
-                    print(f"[ERROR] {error_msg}")
-                    raise ValueError(error_msg)
+            # Import the resizable widget
+            from .resizable_widget import ResizableWidget
+            
+            # Create the widget based on type using ResizableWidget as base
+            print(f"[DEBUG] Creating resizable widget of type: {widget_type}")
+            widget = ResizableWidget(widget_type, topic, mqtt_client=self.mqtt, parent=self.container)
+            
+            # Add specific content based on widget type
+            if widget_type == 'label':
+                from PyQt6.QtWidgets import QLabel
+                from PyQt6.QtCore import Qt
+                content = QLabel("0")
+                content.setAlignment(Qt.AlignmentFlag.AlignCenter)
+                widget.content_layout.addWidget(content)
+                widget.value_widget = content
                 
-                # Set parent after creation to avoid issues with Qt's parent-child relationship
-                if widget is not None:
-                    widget.setParent(self)
+                def on_message_received(topic_msg, message):
+                    if topic_msg == topic:
+                        # Use widget's format_value method for proper formatting
+                        formatted_value = widget.format_value(message)
+                        content.setText(formatted_value)
+                        
+                        # Apply warning colors if enabled
+                        warning_color = widget.get_warning_color(message)
+                        if warning_color:
+                            content.setStyleSheet(f"color: {warning_color}; font-weight: bold;")
+                        else:
+                            # Use configured text color
+                            text_color = widget.config.get('text_color', '#212529')
+                            font_size = widget.config.get('font_size', 16)
+                            content.setStyleSheet(f"color: {text_color}; font-size: {font_size}px; font-weight: bold;")
+                
+                widget.on_message_received = on_message_received
+                
+            elif widget_type in ['gauge', 'gauge_circular', 'gauge_linear', 'gauge_speedometer']:
+                from PyQt6.QtWidgets import QLabel
+                from PyQt6.QtGui import QPainter, QColor, QPen, QBrush, QPolygon
+                from PyQt6.QtCore import QRect, QPoint
+                import math
+                
+                # Create a custom gauge widget
+                gauge_widget = QWidget()
+                gauge_widget.setMinimumSize(100, 80)
+                gauge_widget.value = 0
+                gauge_widget.gauge_type = widget_type
+                
+                def paintEvent(event):
+                    painter = QPainter(gauge_widget)
+                    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
                     
-            except Exception as e:
-                print(f"[ERROR] Failed to create widget: {e}")
-                raise
+                    rect = gauge_widget.rect()
+                    center = rect.center()
+                    
+                    # Get config values
+                    min_val = widget.config.get('min_value', 0.0)
+                    max_val = widget.config.get('max_value', 100.0)
+                    accent_color = widget.config.get('accent_color', '#0d6efd')
+                    text_color = widget.config.get('text_color', '#000000')
+                    font_size = widget.config.get('font_size', 12)
+                    
+                    if gauge_widget.gauge_type == 'gauge_circular':
+                        # Full circle gauge
+                        radius = min(rect.width(), rect.height()) // 2 - 20
+                        
+                        # Draw background circle
+                        pen = QPen(QColor(200, 200, 200), 6)
+                        painter.setPen(pen)
+                        painter.drawEllipse(center.x() - radius, center.y() - radius, radius * 2, radius * 2)
+                        
+                        # Draw value arc
+                        if max_val > min_val:
+                            normalized_value = max(0, min(1, (gauge_widget.value - min_val) / (max_val - min_val)))
+                            value_angle = int(normalized_value * 360 * 16)
+                            
+                            warning_color = widget.get_warning_color(gauge_widget.value)
+                            arc_color = QColor(warning_color) if warning_color else QColor(accent_color)
+                            pen.setColor(arc_color)
+                            painter.setPen(pen)
+                            painter.drawArc(center.x() - radius, center.y() - radius,
+                                           radius * 2, radius * 2, 90 * 16, -value_angle)
+                    
+                    elif gauge_widget.gauge_type == 'gauge_linear':
+                        # Horizontal bar gauge
+                        bar_height = 20
+                        bar_width = rect.width() - 40
+                        bar_x = 20
+                        bar_y = center.y() - bar_height // 2
+                        
+                        # Draw background bar
+                        painter.setPen(QPen(QColor(200, 200, 200), 2))
+                        painter.setBrush(QBrush(QColor(240, 240, 240)))
+                        painter.drawRect(bar_x, bar_y, bar_width, bar_height)
+                        
+                        # Draw value bar
+                        if max_val > min_val:
+                            normalized_value = max(0, min(1, (gauge_widget.value - min_val) / (max_val - min_val)))
+                            value_width = int(normalized_value * bar_width)
+                            
+                            warning_color = widget.get_warning_color(gauge_widget.value)
+                            bar_color = QColor(warning_color) if warning_color else QColor(accent_color)
+                            painter.setBrush(QBrush(bar_color))
+                            painter.setPen(QPen(bar_color, 1))
+                            painter.drawRect(bar_x, bar_y, value_width, bar_height)
+                    
+                    elif gauge_widget.gauge_type == 'gauge_speedometer':
+                        # Speedometer with needle
+                        radius = min(rect.width(), rect.height()) // 2 - 20
+                        
+                        # Draw background arc
+                        pen = QPen(QColor(200, 200, 200), 8)
+                        painter.setPen(pen)
+                        painter.drawArc(center.x() - radius, center.y() - radius,
+                                       radius * 2, radius * 2, 45 * 16, 90 * 16)
+                        
+                        # Draw scale marks
+                        painter.setPen(QPen(QColor(100, 100, 100), 2))
+                        for i in range(11):  # 0-10 marks
+                            angle = 45 + (i * 9)  # 45° to 135°
+                            angle_rad = math.radians(angle)
+                            x1 = center.x() + (radius - 10) * math.cos(angle_rad)
+                            y1 = center.y() + (radius - 10) * math.sin(angle_rad)
+                            x2 = center.x() + radius * math.cos(angle_rad)
+                            y2 = center.y() + radius * math.sin(angle_rad)
+                            painter.drawLine(int(x1), int(y1), int(x2), int(y2))
+                        
+                        # Draw needle
+                        if max_val > min_val:
+                            normalized_value = max(0, min(1, (gauge_widget.value - min_val) / (max_val - min_val)))
+                            needle_angle = 45 + (normalized_value * 90)
+                            needle_rad = math.radians(needle_angle)
+                            
+                            warning_color = widget.get_warning_color(gauge_widget.value)
+                            needle_color = QColor(warning_color) if warning_color else QColor(accent_color)
+                            
+                            # Draw needle
+                            painter.setPen(QPen(needle_color, 3))
+                            needle_x = center.x() + (radius - 15) * math.cos(needle_rad)
+                            needle_y = center.y() + (radius - 15) * math.sin(needle_rad)
+                            painter.drawLine(center.x(), center.y(), int(needle_x), int(needle_y))
+                            
+                            # Draw center dot
+                            painter.setBrush(QBrush(needle_color))
+                            painter.drawEllipse(center.x() - 4, center.y() - 4, 8, 8)
+                    
+                    else:  # Default arc gauge
+                        radius = min(rect.width(), rect.height()) // 2 - 15
+                        
+                        # Draw background arc
+                        pen = QPen(QColor(200, 200, 200), 8)
+                        painter.setPen(pen)
+                        painter.drawArc(center.x() - radius, center.y() - radius, 
+                                       radius * 2, radius * 2, 30 * 16, 120 * 16)
+                        
+                        # Draw value arc
+                        if max_val > min_val:
+                            normalized_value = max(0, min(1, (gauge_widget.value - min_val) / (max_val - min_val)))
+                            value_angle = int(normalized_value * 120 * 16)
+                            
+                            warning_color = widget.get_warning_color(gauge_widget.value)
+                            arc_color = QColor(warning_color) if warning_color else QColor(accent_color)
+                            
+                            pen.setColor(arc_color)
+                            painter.setPen(pen)
+                            painter.drawArc(center.x() - radius, center.y() - radius,
+                                           radius * 2, radius * 2, 30 * 16, value_angle)
+                    
+                    # Draw value text (common for all types)
+                    painter.setPen(QColor(text_color))
+                    font = painter.font()
+                    font.setPointSize(font_size)
+                    painter.setFont(font)
+                    
+                    formatted_value = widget.format_value(gauge_widget.value)
+                    
+                    # Position text based on gauge type
+                    if gauge_widget.gauge_type == 'gauge_linear':
+                        from PyQt6.QtCore import QRect, Qt
+                        text_rect = QRect(0, rect.bottom() - 30, rect.width(), 20)
+                    else:
+                        from PyQt6.QtCore import Qt
+                        text_rect = rect
+                    
+                    painter.drawText(text_rect, Qt.AlignmentFlag.AlignCenter, formatted_value)
+                    
+                    # Draw min/max labels for arc gauges
+                    if gauge_widget.gauge_type in ['gauge', 'gauge_speedometer']:
+                        small_font = painter.font()
+                        small_font.setPointSize(max(8, font_size - 4))
+                        painter.setFont(small_font)
+                        
+                        min_text = f"{min_val:.0f}"
+                        max_text = f"{max_val:.0f}"
+                        
+                        painter.drawText(rect.left() + 5, rect.bottom() - 5, min_text)
+                        painter.drawText(rect.right() - 25, rect.bottom() - 5, max_text)
                 
-            if widget is None:
-                raise ValueError("Failed to create widget")
+                gauge_widget.paintEvent = paintEvent
+                widget.content_layout.addWidget(gauge_widget)
+                widget.gauge_widget = gauge_widget
                 
-            print(f"[DEBUG] Widget created: {widget}")
+                def on_message_received(topic_msg, message):
+                    if topic_msg == topic:
+                        try:
+                            gauge_widget.value = float(message)
+                            gauge_widget.update()
+                        except ValueError:
+                            pass
+                widget.on_message_received = on_message_received
+                
+            elif widget_type == 'button':
+                from PyQt6.QtWidgets import QPushButton
+                button = QPushButton("Toggle")
+                button.setCheckable(True)
+                button.setStyleSheet("""
+                    QPushButton {
+                        background-color: #e9ecef;
+                        border: 1px solid #ced4da;
+                        border-radius: 4px;
+                        padding: 8px 16px;
+                        font-weight: 500;
+                    }
+                    QPushButton:checked {
+                        background-color: #0d6efd;
+                        color: white;
+                    }
+                """)
+                
+                def on_click():
+                    if self.mqtt:
+                        self.mqtt.publish(topic, str(int(button.isChecked())))
+                button.clicked.connect(on_click)
+                
+                widget.content_layout.addWidget(button)
+                widget.button_widget = button
+                
+                def on_message_received(topic_msg, message):
+                    if topic_msg == topic:
+                        try:
+                            button.setChecked(bool(int(message)))
+                        except ValueError:
+                            pass
+                widget.on_message_received = on_message_received
             
-            # Set size policy to make widgets expand to fill their grid cell
-            try:
-                widget.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
-            except Exception as e:
-                print(f"[ERROR] Failed to set size policy: {e}")
-                raise
+            elif widget_type == 'slider':
+                from PyQt6.QtWidgets import QSlider, QLabel
+                from PyQt6.QtCore import Qt
+                
+                # Create slider
+                slider = QSlider(Qt.Orientation.Horizontal)
+                min_val = widget.config.get('min_value', 0.0)
+                max_val = widget.config.get('max_value', 100.0)
+                slider.setMinimum(int(min_val))
+                slider.setMaximum(int(max_val))
+                slider.setValue(int(min_val))
+                
+                # Create value display
+                value_label = QLabel(str(int(min_val)))
+                value_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+                
+                # Style the slider
+                accent_color = widget.config.get('accent_color', '#0d6efd')
+                slider.setStyleSheet(f"""
+                    QSlider::groove:horizontal {{
+                        border: 1px solid #ced4da;
+                        height: 8px;
+                        background: #e9ecef;
+                        margin: 0px;
+                        border-radius: 4px;
+                    }}
+                    QSlider::handle:horizontal {{
+                        background: {accent_color};
+                        border: 1px solid {accent_color};
+                        width: 16px;
+                        margin: -4px 0;
+                        border-radius: 8px;
+                    }}
+                    QSlider::handle:horizontal:hover {{
+                        background: {accent_color};
+                        opacity: 0.8;
+                    }}
+                """)
+                
+                # Style value label
+                text_color = widget.config.get('text_color', '#212529')
+                font_size = widget.config.get('font_size', 14)
+                value_label.setStyleSheet(f"""
+                    QLabel {{
+                        color: {text_color};
+                        font-size: {font_size}px;
+                        font-weight: bold;
+                        padding: 4px;
+                    }}
+                """)
+                
+                # Flag to prevent feedback loops
+                widget._updating_from_mqtt = False
+                
+                def on_value_changed(value):
+                    # Only publish if user changed it, not MQTT
+                    if not widget._updating_from_mqtt:
+                        try:
+                            formatted_value = widget.format_value(value)
+                            if hasattr(widget, 'value_label') and widget.value_label:
+                                widget.value_label.setText(formatted_value)
+                            if self.mqtt:
+                                self.mqtt.publish(topic, str(value))
+                        except (RuntimeError, AttributeError):
+                            pass
+                
+                slider.valueChanged.connect(on_value_changed)
+                
+                # Add to layout
+                widget.content_layout.addWidget(value_label)
+                widget.content_layout.addWidget(slider)
+                widget.slider_widget = slider
+                widget.value_label = value_label
+                
+                def on_message_received(topic_msg, message):
+                    if topic_msg == topic:
+                        try:
+                            # Check if widgets still exist and are valid
+                            if (hasattr(widget, 'slider_widget') and widget.slider_widget and 
+                                hasattr(widget, 'value_label') and widget.value_label and
+                                not widget.slider_widget.isHidden()):
+                                
+                                # Set flag to prevent feedback loop
+                                widget._updating_from_mqtt = True
+                                
+                                value = int(float(message))
+                                # Clamp value to slider range
+                                min_val = widget.slider_widget.minimum()
+                                max_val = widget.slider_widget.maximum()
+                                value = max(min_val, min(max_val, value))
+                                
+                                widget.slider_widget.setValue(value)
+                                formatted_value = widget.format_value(value)
+                                widget.value_label.setText(formatted_value)
+                                
+                                # Reset flag
+                                widget._updating_from_mqtt = False
+                                
+                        except (ValueError, RuntimeError, AttributeError):
+                            # Reset flag on error
+                            widget._updating_from_mqtt = False
+                widget.on_message_received = on_message_received
             
-            # Add to layout
-            if row is not None and col is not None:
-                # Add at specified position
-                self.grid_layout.addWidget(widget, row, col, 1, 1)
-            else:
-                # Find the next available cell
-                position = self.find_empty_cell()
-                self.grid_layout.addWidget(widget, *position, 1, 1)
+            # Position the widget
+            if x is None or y is None:
+                x, y = self.find_next_position()
             
-            # Add to widgets list
+            # Snap to grid
+            x = round(x / self.grid_size) * self.grid_size
+            y = round(y / self.grid_size) * self.grid_size
+            
+            widget.move(x, y)
+            widget.resize(160, 120)  # Default size
+            
             self.widgets.append(widget)
             
-            # Subscribe to the topic if we have an MQTT client
-            if self.mqtt and topic not in self.subscribed_topics:
-                try:
+            # Subscribe to MQTT topic
+            if self.mqtt and topic:
+                if topic not in self.subscribed_topics:
+                    print(f"[DEBUG] Subscribing to topic: {topic}")
                     self.mqtt.subscribe(topic)
                     self.subscribed_topics.add(topic)
-                except Exception as e:
-                    print(f"Failed to subscribe to {topic}: {str(e)}")
+                
+                # Connect MQTT messages
+                if hasattr(widget, 'on_message_received'):
+                    self.mqtt.message_received.connect(widget.on_message_received)
+                    print(f"[DEBUG] Connected message_received signal for {widget_type} widget")
             
-            # Ensure the widget is visible
             widget.show()
             return widget
             
@@ -182,6 +481,23 @@ class Dashboard(QWidget):
         # If no empty cells found, add a new row
         return (self.grid_layout.rowCount(), 0)
     
+    def find_next_position(self):
+        """Find the next available position for absolute positioning"""
+        # Simple grid-based positioning
+        x, y = 20, 20  # Start position
+        
+        # Check existing widgets to avoid overlap
+        for widget in self.widgets:
+            widget_rect = widget.geometry()
+            # If position would overlap, move to next grid position
+            if abs(widget_rect.x() - x) < 180 and abs(widget_rect.y() - y) < 140:
+                x += 180  # Move right
+                if x > 800:  # Wrap to next row
+                    x = 20
+                    y += 140
+        
+        return x, y
+    
     def save_layout(self, file_path=None):
         """Save the current dashboard layout to a file with widget positions and sizes
         
@@ -193,59 +509,40 @@ class Dashboard(QWidget):
         """
         try:
             if file_path is None:
-                # Get the file path with a default .json extension if not provided
                 file_path, _ = QFileDialog.getSaveFileName(
-                    self, 
-                    "Save Layout", 
-                    "", 
+                    self,
+                    "Save Layout",
+                    "",
                     "JSON Files (*.json);;All Files (*)",
-                    options=QFileDialog.Option.DontUseNativeDialog
+                    options=QFileDialog.Option.DontConfirmOverwrite
                 )
-                
                 if not file_path:
-                    return False  # User cancelled
-                
-                # Ensure the file has a .json extension
-                if not file_path.lower().endswith('.json'):
-                    file_path += '.json'
+                    return False
             
-            # Create a dictionary to store the layout
             layout_data = {
-                'version': 2,  # Version 2: Grid layout
                 'widgets': []
             }
             
-            # Save each widget's data
-            for i in range(self.grid_layout.count()):
-                widget = self.grid_layout.itemAt(i).widget()
-                if widget and hasattr(widget, 'widget_type') and hasattr(widget, 'topic'):
-                    # Get the widget's position in the grid
-                    index = self.grid_layout.indexOf(widget)
-                    row, col, row_span, col_span = self.grid_layout.getItemPosition(index)
-                    
-                    # Get widget-specific data
-                    widget_data = {
-                        'type': widget.widget_type,
-                        'topic': widget.topic,
-                        'position': {
-                            'row': row,
-                            'col': col,
-                            'row_span': row_span,
-                            'col_span': col_span
-                        },
-                        'value': widget.get_value()
-                    }
-                    
-                    # Add widget-specific properties
-                    if hasattr(widget, 'min_val') and hasattr(widget, 'max_val'):
-                        widget_data['min'] = widget.min_val
-                        widget_data['max'] = widget.max_val
-                    
-                    # Add button state if applicable
-                    if hasattr(widget, 'state'):
-                        widget_data['state'] = widget.state
-                    
-                    layout_data['widgets'].append(widget_data)
+            # Save widget data with absolute positions
+            for i, widget in enumerate(self.widgets):
+                if widget is not None:
+                    try:
+                        geometry = widget.geometry()
+                        
+                        widget_data = {
+                            'type': widget.widget_type,
+                            'topic': widget.topic,
+                            'x': geometry.x(),
+                            'y': geometry.y(),
+                            'width': geometry.width(),
+                            'height': geometry.height(),
+                            'config': widget.config,
+                            'value': widget.get_value() if hasattr(widget, 'get_value') else ""
+                        }
+                        
+                        layout_data['widgets'].append(widget_data)
+                    except Exception as e:
+                        print(f"Failed to save widget {i}: {str(e)}")
             
             # Create directory if it doesn't exist
             os.makedirs(os.path.dirname(os.path.abspath(file_path)), exist_ok=True)
@@ -266,10 +563,26 @@ class Dashboard(QWidget):
             return True
             
         except Exception as e:
-            error_msg = f"Failed to save layout: {str(e)}"
+            error_msg = f"Failed to load layout: {str(e)}"
             print(error_msg)
             QMessageBox.critical(self, "Error", error_msg)
             return False
+    
+    def set_presentation_mode(self, enabled):
+        """Toggle presentation mode for all widgets"""
+        self.presentation_mode = enabled
+        self.container.show_grid = not enabled
+        self.container.update()  # Refresh grid display
+        
+        for widget in self.widgets:
+            if widget is not None:
+                widget.set_presentation_mode(enabled)
+    
+    def set_widget_opacity(self, opacity):
+        """Set opacity for all widgets"""
+        for widget in self.widgets:
+            if widget is not None:
+                widget.setWindowOpacity(opacity)
     
     def load_layout(self, file_path=None):
         """Load a dashboard layout from a file
@@ -307,76 +620,118 @@ class Dashboard(QWidget):
             for widget_data in layout_data.get('widgets', []):
                 widget_type = widget_data.get('type')
                 topic = widget_data.get('topic')
-                position = widget_data.get('position', {})
+                x = widget_data.get('x', 20)
+                y = widget_data.get('y', 20)
+                width = widget_data.get('width', 160)
+                height = widget_data.get('height', 120)
+                config = widget_data.get('config', {})
                 
                 if not widget_type or not topic:
                     print(f"Skipping widget with missing type or topic: {widget_data}")
                     continue
                 
-                # Create widget with appropriate parameters
-                kwargs = {}
-                if 'min' in widget_data and 'max' in widget_data:
-                    kwargs['min_val'] = widget_data['min']
-                    kwargs['max_val'] = widget_data['max']
+                # Create the widget
+                widget = self.add_widget(widget_type, topic, x=x, y=y)
                 
-                # For button widgets, restore the state if available
-                if widget_type == 'button' and 'state' in widget_data:
-                    kwargs['initial_state'] = bool(widget_data['state'])
-                
-                # For label widgets, set the initial value
-                if widget_type == 'label' and 'value' in widget_data:
-                    kwargs['initial_value'] = str(widget_data['value'])
-                
-                # For slider and gauge widgets, set the initial value if available
-                if widget_type in ['slider', 'gauge'] and 'value' in widget_data:
-                    try:
-                        kwargs['initial_val'] = float(widget_data['value'])
-                    except (ValueError, TypeError):
-                        pass
-                
-                # Add the widget to the dashboard
-                widget = self.add_widget(
-                    widget_type,
-                    topic,
-                    row=position.get('row'),
-                    col=position.get('col'),
-                    **kwargs
-                )
-                
-                # Restore additional widget state if needed
                 if widget:
-                    # For button widgets, restore the checked state
-                    if widget_type == 'button' and 'state' in widget_data:
-                        try:
-                            widget.button.setChecked(bool(widget_data['state']))
-                            widget.state = bool(widget_data['state'])
-                        except Exception as e:
-                            print(f"Failed to restore button state: {str(e)}")
-                    
-                    # For slider and gauge widgets, ensure the value is set
-                    if widget_type in ['slider', 'gauge'] and 'value' in widget_data:
+                    # Restore size and configuration
+                    widget.resize(width, height)
+                    widget.config = config
+                    widget.apply_config()
+
+                    # Restore widget-specific state
+                    if 'value' in widget_data:
                         try:
                             if hasattr(widget, 'set_value'):
                                 widget.set_value(widget_data['value'])
                         except Exception as e:
                             print(f"Failed to set value for {widget_type} widget: {str(e)}")
-            
+
             # Update the current layout file
             self.current_layout_file = file_path
-            
+
             # If we have a parent with settings, update the last layout file
             if hasattr(self.parent(), 'settings'):
                 if not hasattr(self.parent(), 'settings'):
                     self.parent().settings = {}
                 self.parent().settings['layout_file'] = file_path
-            
+
             return True
-            
+
         except Exception as e:
             error_msg = f"Failed to load layout: {str(e)}"
             print(error_msg)
             QMessageBox.critical(self, "Error", error_msg)
             return False
+    
+    def clear_widgets(self):
+        """Remove all widgets from the dashboard"""
+        print(f"[DEBUG] Clearing {len(self.widgets)} widgets")
+        
+        # Make a copy of the widgets list to avoid modification during iteration
+        for widget in self.widgets[:]:
+            try:
+                if widget is not None:
+                    print(f"[DEBUG] Removing widget: {widget.widget_type} - {widget.topic}")
+                    widget.setParent(None)
+                    widget.hide()
+                    widget.deleteLater()
+            except RuntimeError:
+                # Widget already deleted
+                pass
+
+        # Clear the widgets list and subscriptions
+        self.widgets.clear()
+        self.subscribed_topics.clear()
+        print("[DEBUG] All widgets cleared")
+
+    def show_context_menu(self, position):
+        """Show context menu for the dashboard
+
+        Args:
+            position: The position where the context menu was triggered
+        """
+        menu = QMenu(self)
+
+        # Add menu items
+        add_action = menu.addAction("Add Widget")
+        save_action = menu.addAction("Save Layout")
+        load_action = menu.addAction("Load Layout")
+        clear_action = menu.addAction("Clear All Widgets")
+
+        # Show menu and get selected action
+        action = menu.exec(self.mapToGlobal(position))
+
+        # Handle the selected action
+        if action == add_action:
+            self.show_add_widget_dialog()
+        elif action == save_action:
+            self.save_layout()
+        elif action == load_action:
+            # Ask for confirmation if there are existing widgets
+            if self.widgets:
+                reply = QMessageBox.question(
+                    self,
+                    'Confirm Clear',
+                    'Loading a layout will remove all current widgets. Continue?',
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                    QMessageBox.StandardButton.No
+                )
+                if reply == QMessageBox.StandardButton.Yes:
+                    self.load_layout()
+            else:
+                self.load_layout()
+        elif action == clear_action:
+            # Ask for confirmation before clearing
+            reply = QMessageBox.question(
+                self,
+                'Confirm Clear',
+                'Are you sure you want to remove all widgets?',
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No
+            )
+            if reply == QMessageBox.StandardButton.Yes:
+                self.clear_widgets()
     
     def clear_widgets(self):
         """Remove all widgets from the dashboard"""
@@ -505,7 +860,7 @@ class AddWidgetDialog(QDialog):
         
         # Widget type selection
         self.widget_type = QComboBox()
-        self.widget_type.addItems(["label", "button", "slider", "gauge"])
+        self.widget_type.addItems(['label', 'gauge', 'gauge_circular', 'gauge_linear', 'gauge_speedometer', 'button', 'slider'])
         
         # Topic input
         self.topic_edit = QLineEdit()
@@ -620,43 +975,27 @@ class BaseWidget(QFrame):
             
     def mouseReleaseEvent(self, event):
         self.resizing = False
-        self.original_geometry = None
-        event.accept()
         
-    def on_title_press(self, event):
-        if event.button() == Qt.MouseButton.LeftButton:
-            self.dragging = True
-            self.mouse_press_pos = event.globalPosition().toPoint()
-            self.original_geometry = self.geometry()
-            event.accept()
-            
-    def on_title_move(self, event):
-        if self.dragging and self.original_geometry:
-            # Move the widget
-            delta = event.globalPosition().toPoint() - self.mouse_press_pos
-            self.move(self.original_geometry.topLeft() + delta)
-            event.accept()
-            
-    def on_title_release(self, event):
-        if event.button() == Qt.MouseButton.LeftButton:
-            self.dragging = False
-            self.original_geometry = None
-            event.accept()
+        # Create content layout
+        self.content_layout = QVBoxLayout()
+        self.content_layout.setContentsMargins(5, 5, 5, 5)
+        self.layout.addLayout(self.content_layout)
     
     def init_ui(self):
         self.layout = QVBoxLayout(self)
-        self.setMinimumSize(200, 100)
+        self.setMinimumSize(100, 80)
         
         # Title bar
         self.title_bar = QWidget()
         self.title_layout = QHBoxLayout(self.title_bar)
-        self.title_layout.setContentsMargins(0, 0, 0, 0)
+        self.title_layout.setContentsMargins(5, 2, 5, 2)
         
         self.title_label = QLabel(self.topic)
-        self.title_label.setStyleSheet("font-weight: bold;")
+        self.title_label.setStyleSheet("font-weight: bold; font-size: 10px;")
         
         self.close_btn = QPushButton("×")
-        self.close_btn.setFixedSize(20, 20)
+        self.close_btn.setFixedSize(16, 16)
+        self.close_btn.setStyleSheet("QPushButton { font-size: 10px; }")
         self.close_btn.clicked.connect(self.deleteLater)
         
         self.title_layout.addWidget(self.title_label)
@@ -664,22 +1003,133 @@ class BaseWidget(QFrame):
         self.title_layout.addWidget(self.close_btn)
         
         self.layout.addWidget(self.title_bar)
+    
+    def snap_to_grid(self, pos):
+        """Snap position to grid"""
+        x = round(pos.x() / self.grid_size) * self.grid_size
+        y = round(pos.y() / self.grid_size) * self.grid_size
+        return QPoint(x, y)
+    
+    def snap_size_to_grid(self, size):
+        """Snap size to grid"""
+        w = max(self.grid_size * 2, round(size.width() / self.grid_size) * self.grid_size)
+        h = max(self.grid_size * 2, round(size.height() / self.grid_size) * self.grid_size)
+        return QSize(w, h)
+    
+    def get_resize_direction(self, pos):
+        """Determine resize direction based on mouse position"""
+        rect = self.rect()
+        margin = self.resize_margin
         
-        # Make widget draggable
-        self.dragging = False
-        self.offset = QPoint()
+        left = pos.x() <= margin
+        right = pos.x() >= rect.width() - margin
+        top = pos.y() <= margin
+        bottom = pos.y() >= rect.height() - margin
+        
+        if left and top:
+            return 'nw'
+        elif right and top:
+            return 'ne'
+        elif left and bottom:
+            return 'sw'
+        elif right and bottom:
+            return 'se'
+        elif left:
+            return 'w'
+        elif right:
+            return 'e'
+        elif top:
+            return 'n'
+        elif bottom:
+            return 's'
+        return None
+    
+    def update_cursor(self, direction):
+        """Update cursor based on resize direction"""
+        cursors = {
+            'n': Qt.CursorShape.SizeVerCursor,
+            's': Qt.CursorShape.SizeVerCursor,
+            'e': Qt.CursorShape.SizeHorCursor,
+            'w': Qt.CursorShape.SizeHorCursor,
+            'ne': Qt.CursorShape.SizeBDiagCursor,
+            'sw': Qt.CursorShape.SizeBDiagCursor,
+            'nw': Qt.CursorShape.SizeFDiagCursor,
+            'se': Qt.CursorShape.SizeFDiagCursor
+        }
+        if direction in cursors:
+            self.setCursor(cursors[direction])
+        else:
+            self.setCursor(Qt.CursorShape.ArrowCursor)
     
     def mousePressEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
-            self.dragging = True
-            self.offset = event.pos()
+            self.resize_direction = self.get_resize_direction(event.pos())
+            if self.resize_direction:
+                self.resizing = True
+                self.original_geometry = self.geometry()
+            else:
+                self.dragging = True
+                self.offset = event.pos()
     
     def mouseMoveEvent(self, event):
-        if self.dragging:
-            self.move(self.mapToParent(event.pos() - self.offset))
+        if self.resizing and self.resize_direction:
+            self.handle_resize(event.pos())
+        elif self.dragging:
+            new_pos = self.mapToParent(event.pos() - self.offset)
+            snapped_pos = self.snap_to_grid(new_pos)
+            self.move(snapped_pos)
+        else:
+            # Update cursor when hovering
+            direction = self.get_resize_direction(event.pos())
+            self.update_cursor(direction)
+    
+    def handle_resize(self, pos):
+        """Handle widget resizing"""
+        if not self.original_geometry:
+            return
+            
+        orig = self.original_geometry
+        new_rect = QRect(orig)
+        
+        if 'n' in self.resize_direction:
+            new_rect.setTop(orig.top() + pos.y())
+        if 's' in self.resize_direction:
+            new_rect.setBottom(orig.top() + pos.y())
+        if 'w' in self.resize_direction:
+            new_rect.setLeft(orig.left() + pos.x())
+        if 'e' in self.resize_direction:
+            new_rect.setRight(orig.left() + pos.x())
+        
+        # Ensure minimum size
+        if new_rect.width() < self.minimumWidth():
+            if 'w' in self.resize_direction:
+                new_rect.setLeft(new_rect.right() - self.minimumWidth())
+            else:
+                new_rect.setRight(new_rect.left() + self.minimumWidth())
+        
+        if new_rect.height() < self.minimumHeight():
+            if 'n' in self.resize_direction:
+                new_rect.setTop(new_rect.bottom() - self.minimumHeight())
+            else:
+                new_rect.setBottom(new_rect.top() + self.minimumHeight())
+        
+        # Snap to grid
+        snapped_size = self.snap_size_to_grid(new_rect.size())
+        new_rect.setSize(snapped_size)
+        
+        self.setGeometry(new_rect)
     
     def mouseReleaseEvent(self, event):
         self.dragging = False
+        self.resizing = False
+        self.resize_direction = None
+        self.original_geometry = None
+        self.setCursor(Qt.CursorShape.ArrowCursor)
+    
+    def leaveEvent(self, event):
+        """Reset cursor when leaving widget"""
+        if not self.resizing:
+            self.setCursor(Qt.CursorShape.ArrowCursor)
     
     def get_value(self):
         """Return the current value of the widget"""
@@ -857,7 +1307,7 @@ class GaugeWidget(BaseWidget):
         
         # Calculate gauge dimensions
         gauge_rect = self.rect().adjusted(margin, margin, -margin, -margin)
-        gauge_rect.setHeight(gauge_rect.height() * 0.7)  # Make room for value display
+        gauge_rect.setHeight(int(gauge_rect.height() * 0.7))  # Make room for value display
         
         # Draw background arc
         pen = QPen()
@@ -888,7 +1338,7 @@ class GaugeWidget(BaseWidget):
         painter.setPen(QColor(33, 37, 41))  # Dark gray
         
         value_rect = QRect(gauge_rect)
-        value_rect.setTop(gauge_rect.bottom() - 10)
+        value_rect.setTop(int(gauge_rect.bottom() - 10))
         value_rect.setHeight(height - gauge_rect.bottom() - 5)
         
         painter.drawText(value_rect, Qt.AlignmentFlag.AlignCenter, f"{self.value:.1f}")

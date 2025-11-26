@@ -261,9 +261,16 @@ class ResizableWidget(QFrame):
             self.icon_label.hide()
 
             # Remove border but keep background for visibility
-            bg_color = self.config.get('background_color', '#1e1e1e')
-            opacity = self.config.get('opacity', 100)
+            # Support both 'bg_color' (from widget customization) and 'background_color' (from themes)
+            bg_color = self.config.get('bg_color', self.config.get('background_color', '#1e1e1e'))
             border_radius = self.config.get('border_radius', 6)
+
+            # Support both 'opacity' (0-100) and 'individual_opacity' (0.0-1.0)
+            opacity = self.config.get('opacity', 100)
+            individual_opacity = self.config.get('individual_opacity')
+            if individual_opacity is not None:
+                # individual_opacity is 0.0-1.0, convert to 0-100
+                opacity = int(individual_opacity * 100)
 
             # Convert opacity (0-100) to alpha (0-255)
             alpha = int(opacity * 2.55)

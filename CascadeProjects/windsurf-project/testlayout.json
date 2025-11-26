@@ -16,13 +16,15 @@
             "icon_size": 24,
             "icon_position": "left",
             "accent_color": "#8AB8FF",
-            "bg_color": "#111927",
-            "text_color": "#D9D9D9",
+            "bg_color": "#00ff00",
+            "text_color": "#ffffff",
             "border_color": "#1F2937",
             "normal_zone_color": "#5794F2",
             "warning_color": "#FF9830",
             "critical_color": "#F2495C",
-            "individual_opacity": 0.64
+            "individual_opacity": 0.64,
+            "icon_data": "\ud83c\udf21",
+            "icon_is_text": true
         }
     },
     {
@@ -49,14 +51,21 @@
         "height": 200,
         "config": {
             "type": "gauge",
-            "bg_color": "#111927",
+            "bg_color": "#0055ff",
             "text_color": "#D9D9D9",
             "border_color": "#1F2937",
             "accent_color": "#8AB8FF",
             "normal_zone_color": "#5794F2",
             "warning_color": "#FF9830",
             "critical_color": "#F2495C",
-            "individual_opacity": 0.64
+            "individual_opacity": 0.64,
+            "display_name": "",
+            "show_title": true,
+            "theme_selector": "use_global",
+            "font_size": 8,
+            "unit": "",
+            "icon_size": 24,
+            "icon_position": "left"
         }
     },
     {
@@ -82,11 +91,18 @@
         "width": 100,
         "height": 100,
         "config": {
-            "bg_color": "#111927",
+            "bg_color": "#00557f",
             "text_color": "#D9D9D9",
             "border_color": "#1F2937",
             "accent_color": "#8AB8FF",
-            "individual_opacity": 0.64
+            "individual_opacity": 0.64,
+            "display_name": "",
+            "show_title": true,
+            "theme_selector": "use_global",
+            "font_size": 8,
+            "unit": "",
+            "icon_size": 24,
+            "icon_position": "left"
         }
     }
 ]

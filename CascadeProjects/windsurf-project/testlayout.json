@@ -2,50 +2,91 @@
     {
         "type": "gauge",
         "topic": "temp-ute",
-        "x": 20,
+        "x": 240,
         "y": 20,
-        "width": 200,
-        "height": 160,
+        "width": 140,
+        "height": 200,
         "config": {
-            "type": "gauge"
+            "type": "gauge",
+            "display_name": "",
+            "show_title": true,
+            "theme_selector": "use_global",
+            "font_size": 8,
+            "unit": "",
+            "icon_size": 24,
+            "icon_position": "left",
+            "accent_color": "#8AB8FF",
+            "bg_color": "#111927",
+            "text_color": "#D9D9D9",
+            "border_color": "#1F2937",
+            "normal_zone_color": "#5794F2",
+            "warning_color": "#FF9830",
+            "critical_color": "#F2495C",
+            "individual_opacity": 0.64
         }
     },
     {
         "type": "slider",
         "topic": "lys kontor",
-        "x": 220,
-        "y": 20,
-        "width": 200,
-        "height": 160,
-        "config": {}
+        "x": 120,
+        "y": 240,
+        "width": 260,
+        "height": 80,
+        "config": {
+            "bg_color": "#111927",
+            "text_color": "#D9D9D9",
+            "border_color": "#1F2937",
+            "accent_color": "#8AB8FF",
+            "individual_opacity": 0.64
+        }
     },
     {
         "type": "gauge",
         "topic": "total_effekt",
-        "x": 420,
-        "y": 20,
-        "width": 200,
-        "height": 160,
+        "x": 120,
+        "y": 340,
+        "width": 260,
+        "height": 200,
         "config": {
-            "type": "gauge"
+            "type": "gauge",
+            "bg_color": "#111927",
+            "text_color": "#D9D9D9",
+            "border_color": "#1F2937",
+            "accent_color": "#8AB8FF",
+            "normal_zone_color": "#5794F2",
+            "warning_color": "#FF9830",
+            "critical_color": "#F2495C",
+            "individual_opacity": 0.64
         }
-    },
-    {
-        "type": "label",
-        "topic": "total_effekt",
-        "x": 620,
-        "y": 20,
-        "width": 200,
-        "height": 160,
-        "config": {}
     },
     {
         "type": "button",
         "topic": "Kveld",
-        "x": 220,
-        "y": 180,
-        "width": 200,
-        "height": 160,
-        "config": {}
+        "x": 120,
+        "y": 140,
+        "width": 100,
+        "height": 80,
+        "config": {
+            "bg_color": "#111927",
+            "text_color": "#D9D9D9",
+            "border_color": "#1F2937",
+            "accent_color": "#8AB8FF",
+            "individual_opacity": 0.64
+        }
+    },
+    {
+        "type": "button",
+        "topic": "Morgen",
+        "x": 120,
+        "y": 20,
+        "width": 100,
+        "height": 100,
+        "config": {
+            "bg_color": "#111927",
+            "text_color": "#D9D9D9",
+            "border_color": "#1F2937",
+            "accent_color": "#8AB8FF",
+            "individual_opacity": 0.64
+        }
     }
 ]

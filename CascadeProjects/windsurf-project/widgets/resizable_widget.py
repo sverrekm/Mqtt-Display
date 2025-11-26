@@ -253,18 +253,40 @@ class ResizableWidget(QFrame):
 
     def set_presentation_mode(self, enabled):
         self.presentation_mode = enabled
-        
+
         if enabled:
-            self.background_container.setStyleSheet(self.background_container.styleSheet() + "border: none; background-color: transparent;")
+            # Hide title and close button, but keep widget background and content visible
             self.title_label.hide()
             self.close_btn.hide()
+            self.icon_label.hide()
+
+            # Remove border but keep background for visibility
+            bg_color = self.config.get('background_color', '#1e1e1e')
+            opacity = self.config.get('opacity', 100)
+            border_radius = self.config.get('border_radius', 6)
+
+            # Convert opacity (0-100) to alpha (0-255)
+            alpha = int(opacity * 2.55)
+            bg_with_alpha = QColor(bg_color)
+            bg_with_alpha.setAlpha(alpha)
+
+            self.background_container.setStyleSheet(f"""
+                #widget_background {{
+                    background-color: {bg_with_alpha.name(QColor.NameFormat.HexArgb)};
+                    border: none;
+                    border-radius: {border_radius}px;
+                }}
+            """)
+
+            # Disable mouse interaction for moving/resizing
             self.setWindowFlags(self.windowFlags() | Qt.WindowType.WindowTransparentForInput)
         else:
+            # Restore normal appearance
             self.apply_config()
             self.title_label.show()
             self.close_btn.show()
             self.setWindowFlags(self.windowFlags() & ~Qt.WindowType.WindowTransparentForInput)
-        
+
         # Ensure correct flags for resizing/dragging in and out of presentation mode
         self.setMouseTracking(not enabled) # Disable mouse tracking for cursor changes
         self.setCursor(Qt.CursorShape.ArrowCursor) # Reset cursor
@@ -279,11 +301,18 @@ class ResizableWidget(QFrame):
         self._update_header_icon()
 
         # Apply background styling
-        bg_color = self.config.get('background_color', '#1e1e1e')
+        # Support both 'bg_color' (from widget customization) and 'background_color' (from themes)
+        bg_color = self.config.get('bg_color', self.config.get('background_color', '#1e1e1e'))
         border_color = self.config.get('border_color', '#666666')
         border_width = self.config.get('border_width', 2)
         border_radius = self.config.get('border_radius', 6)
+
+        # Support both 'opacity' (0-100) and 'individual_opacity' (0.0-1.0)
         opacity = self.config.get('opacity', 100)
+        individual_opacity = self.config.get('individual_opacity')
+        if individual_opacity is not None:
+            # individual_opacity is 0.0-1.0, convert to 0-100
+            opacity = int(individual_opacity * 100)
 
         # Convert opacity (0-100) to alpha (0-255)
         alpha = int(opacity * 2.55)

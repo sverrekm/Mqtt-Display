@@ -3,9 +3,9 @@ import json
 import yaml
 from pathlib import Path
 from PyQt6.QtWidgets import (QApplication, QMainWindow, QVBoxLayout, QHBoxLayout,
-                           QWidget, QPushButton, QStackedWidget, QLabel, QMessageBox)
+                           QWidget, QPushButton, QStackedWidget, QLabel, QMessageBox, QSystemTrayIcon, QMenu)
 from PyQt6.QtCore import Qt, pyqtSignal, QObject, QSize
-from PyQt6.QtGui import QIcon
+from PyQt6.QtGui import QIcon, QAction
 from widgets.connection_panel import ConnectionPanel
 from widgets.dashboard import Dashboard
 from config.settings import load_settings, save_settings
@@ -238,6 +238,7 @@ class MainWindow(QMainWindow):
         print(f"[DEBUG] Initial settings loaded: {self.settings}")
         self.init_ui()
         self.setup_connections()
+        self.setup_system_tray()
         self.attempt_auto_connect()
         # Delay startup layout loading more to ensure everything is ready
         from PyQt6.QtCore import QTimer
@@ -267,42 +268,50 @@ class MainWindow(QMainWindow):
 
     def init_ui(self):
         self.setWindowTitle("MQTT Dashboard")
-        self.setMinimumSize(1024, 768)
+        self.setMinimumSize(600, 400)
+
+        # Restore window geometry from settings
+        self.restore_window_geometry()
         
         # Main widget and layout
         main_widget = QWidget()
         self.setCentralWidget(main_widget)
         self.main_layout = QHBoxLayout(main_widget)
+        self.main_layout.setContentsMargins(0, 0, 0, 0)
+        self.main_layout.setSpacing(0)
         
         # Sidebar
         self.sidebar = QWidget()
         self.sidebar.setFixedWidth(200)
+        self.sidebar.setObjectName("sidebar")
         self.sidebar_layout = QVBoxLayout(self.sidebar)
+        self.sidebar_layout.setContentsMargins(5, 5, 5, 5)
+        self.sidebar_layout.setSpacing(5)
         
         # Dashboard button
-        self.btn_dashboard = QPushButton("Dashboard")
+        self.btn_dashboard = QPushButton("󰕮 Dashboard")
         self.btn_dashboard.setCheckable(True)
         self.btn_dashboard.setChecked(True)
         
         # Settings button
-        self.btn_settings = QPushButton("Settings")
+        self.btn_settings = QPushButton("󰒓 Settings")
         self.btn_settings.setCheckable(True)
         
         # Layout selection button
-        self.btn_select_layout = QPushButton("Select Startup Layout")
+        self.btn_select_layout = QPushButton("📂 Select Startup Layout")
         self.btn_select_layout.clicked.connect(self.select_startup_layout)
         
         # Presentation mode button
-        self.btn_presentation = QPushButton("Presentation Mode")
+        self.btn_presentation = QPushButton("▶️ Presentation Mode")
         self.btn_presentation.setCheckable(True)
         self.btn_presentation.clicked.connect(self.toggle_presentation_mode)
         
         # Add buttons to sidebar
         self.sidebar_layout.addWidget(self.btn_dashboard)
         self.sidebar_layout.addWidget(self.btn_settings)
+        self.sidebar_layout.addStretch(1)
         self.sidebar_layout.addWidget(self.btn_select_layout)
         self.sidebar_layout.addWidget(self.btn_presentation)
-        self.sidebar_layout.addStretch()
         
         # Main content area
         self.stacked_widget = QStackedWidget()
@@ -345,7 +354,125 @@ class MainWindow(QMainWindow):
         # Connect opacity and theme signals
         self.settings_panel.opacity_changed.connect(self.set_opacity)
         self.settings_panel.theme_changed.connect(self.apply_theme)
-        
+
+    def setup_system_tray(self):
+        """Setup system tray icon with menu"""
+        import os
+
+        # Create system tray icon
+        self.tray_icon = QSystemTrayIcon(self)
+
+        # Set icon (use same as window icon)
+        icon_path = os.path.join(os.path.dirname(__file__), "assets", "icon.ico")
+        if os.path.exists(icon_path):
+            self.tray_icon.setIcon(QIcon(icon_path))
+        else:
+            # Use default icon if custom icon not found
+            self.tray_icon.setIcon(self.style().standardIcon(self.style().StandardPixmap.SP_ComputerIcon))
+
+        # Create tray menu
+        tray_menu = QMenu()
+
+        # Show/Hide window action
+        show_action = QAction("Vis/Skjul Vindu", self)
+        show_action.triggered.connect(self.toggle_window_visibility)
+        tray_menu.addAction(show_action)
+
+        tray_menu.addSeparator()
+
+        # Presentation mode toggle
+        self.presentation_mode_action = QAction("Aktiver Presentasjonsmodus", self)
+        self.presentation_mode_action.triggered.connect(self.toggle_presentation_mode)
+        tray_menu.addAction(self.presentation_mode_action)
+
+        tray_menu.addSeparator()
+
+        # Dashboard action
+        dashboard_action = QAction("Gå til Dashboard", self)
+        dashboard_action.triggered.connect(lambda: self.switch_page(0))
+        tray_menu.addAction(dashboard_action)
+
+        # Settings action
+        settings_action = QAction("Gå til Innstillinger", self)
+        settings_action.triggered.connect(lambda: self.switch_page(1))
+        tray_menu.addAction(settings_action)
+
+        tray_menu.addSeparator()
+
+        # Quit action
+        quit_action = QAction("Avslutt", self)
+        quit_action.triggered.connect(self.quit_application)
+        tray_menu.addAction(quit_action)
+
+        # Set the menu to the tray icon
+        self.tray_icon.setContextMenu(tray_menu)
+
+        # Show tray icon
+        self.tray_icon.show()
+
+        # Connect tray icon activation (single/double click)
+        self.tray_icon.activated.connect(self.on_tray_icon_activated)
+
+        # Show notification that app is in tray
+        self.tray_icon.showMessage(
+            "MQTT Dashboard",
+            "Programmet kjører i systemstatusfeltet",
+            QSystemTrayIcon.MessageIcon.Information,
+            2000
+        )
+
+    def on_tray_icon_activated(self, reason):
+        """Handle tray icon click"""
+        if reason == QSystemTrayIcon.ActivationReason.Trigger:
+            # Single click - toggle window visibility
+            self.toggle_window_visibility()
+        elif reason == QSystemTrayIcon.ActivationReason.DoubleClick:
+            # Double click - show window and go to dashboard
+            self.show()
+            self.activateWindow()
+            self.switch_page(0)
+
+    def toggle_window_visibility(self):
+        """Toggle window visibility"""
+        if self.isVisible():
+            self.hide()
+        else:
+            self.show()
+            self.activateWindow()
+
+    def quit_application(self):
+        """Quit application properly"""
+        # Save and disconnect
+        self.save_and_quit()
+
+        # Close all windows
+        QApplication.quit()
+
+    def restore_window_geometry(self):
+        """Restore window size and position from settings"""
+        window_settings = self.settings.get('window', {})
+
+        # Restore size
+        width = window_settings.get('width', 800)
+        height = window_settings.get('height', 600)
+        self.resize(width, height)
+
+        # Restore position if available
+        x = window_settings.get('x')
+        y = window_settings.get('y')
+        if x is not None and y is not None:
+            self.move(x, y)
+
+    def save_window_geometry(self):
+        """Save current window size and position to settings"""
+        geometry = self.geometry()
+        self.settings['window'] = {
+            'width': geometry.width(),
+            'height': geometry.height(),
+            'x': geometry.x(),
+            'y': geometry.y()
+        }
+
     def switch_page(self, index):
         self.stacked_widget.setCurrentIndex(index)
         self.btn_dashboard.setChecked(index == 0)
@@ -354,39 +481,48 @@ class MainWindow(QMainWindow):
     def on_connection_status(self, connected, message):
         status = "Connected" if connected else "Disconnected"
         self.statusBar().showMessage(f"{status}: {message}")
+        if connected:
+            self.statusBar().setStyleSheet("background-color: #28a745; color: white;")
+        else:
+            self.statusBar().setStyleSheet("background-color: #dc3545; color: white;")
         
     def apply_styles(self):
         self.setStyleSheet("""
             QMainWindow {
-                background-color: #f0f0f0;
+                background-color: #2B2B2B;
+            }
+            QWidget#sidebar {
+                background-color: #333333;
+                border-right: 1px solid #4A4A4A;
             }
             QPushButton {
-                padding: 8px;
+                background-color: #4A4A4A;
+                color: #E0E0E0;
+                border: 1px solid #4A4A4A;
+                padding: 10px;
                 margin: 2px;
-                border: 1px solid #ccc;
-                border-radius: 4px;
-                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                                          stop:0 #f6f7fa, stop:1 #dadbde);
-            }
-            QPushButton:checked {
-                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                                          stop:0 #6a9eda, stop:1 #4a7bc8);
-                color: white;
+                border-radius: 5px;
+                text-align: left;
             }
             QPushButton:hover {
-                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                                          stop:0 #e7e7e7, stop:1 #d7d7d7);
+                background-color: #5A5A5A;
             }
-            QPushButton:checked:hover {
-                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                                          stop:0 #5d8fd4, stop:1 #3a6cb7);
+            QPushButton:checked {
+                background-color: #007ACC;
+                color: white;
+                border: 1px solid #005C99;
             }
-            #sidebar {
-                background-color: #e0e0e0;
-                border-right: 1px solid #ccc;
+            QStackedWidget {
+                background-color: #2B2B2B;
+            }
+            QStatusBar {
+                background-color: #333333;
+                color: #E0E0E0;
+            }
+            QStatusBar::item {
+                border: none;
             }
         """)
-        self.sidebar.setObjectName("sidebar")
 
     def load_startup_layout(self):
         """Load the startup layout if one is configured"""
@@ -452,26 +588,53 @@ class MainWindow(QMainWindow):
     def toggle_presentation_mode(self):
         """Toggle presentation mode - hide/show frames and buttons"""
         self.presentation_mode = not self.presentation_mode
-        
+
         if self.presentation_mode:
-            # Hide sidebar and make window transparent
-            self.sidebar.hide()
+            # Save current window geometry before going fullscreen
+            self.normal_geometry = self.geometry()
+
+            # Save absolute screen positions of all widgets before going fullscreen
+            self.save_widget_screen_positions()
+
+            # Hide sidebar and statusbar
+            self.sidebar.setFixedWidth(0)
+            self.statusBar().setFixedHeight(0)
             self.setWindowOpacity(self.opacity_level)
+
+            # Make window frameless and fullscreen to cover entire desktop
             # NOTE: WA_TranslucentBackground is already set in __init__, never remove it!
             self.setWindowFlags(Qt.WindowType.Window | Qt.WindowType.FramelessWindowHint | Qt.WindowType.WindowStaysOnTopHint)
 
             # Apply transparent styling to main window
             self.apply_presentation_styling()
 
-            # Hide widget frames and buttons but keep them movable
+            # Hide widget frames and buttons
             self.dashboard.set_presentation_mode(True)
 
-            # Create small show button
-            self.create_show_button()
+            # Update tray icon menu
+            self.presentation_mode_action.setText("Avslutt Presentasjonsmodus")
+
+            # Show window and make it fullscreen after a short delay
+            self.show()
+            from PyQt6.QtCore import QTimer
+            QTimer.singleShot(100, self.go_fullscreen_presentation)
+
+            # Show message about how to exit
+            QMessageBox.information(
+                self,
+                'Presentasjonsmodus',
+                'Presentasjonsmodus aktivert.\n\n'
+                'For å gå ut av presentasjonsmodus:\n'
+                '• Trykk ESC-tasten\n'
+                '• Eller høyreklikk på dashboard og velg "Avslutt Presentasjonsmodus"\n'
+                '• Eller bruk ikonet i systemstatusfeltet',
+                QMessageBox.StandardButton.Ok
+            )
 
         else:
-            # Show sidebar and restore normal window
-            self.sidebar.show()
+            # Restore sidebar and statusbar to original size
+            self.sidebar.setFixedWidth(200)
+            self.statusBar().setMaximumHeight(16777215)  # Reset to no max height
             self.setWindowOpacity(1.0)
             # NOTE: NEVER remove WA_TranslucentBackground - keep it for future toggles!
             self.setWindowFlags(Qt.WindowType.Window)
@@ -482,89 +645,122 @@ class MainWindow(QMainWindow):
             # Show widget frames and buttons
             self.dashboard.set_presentation_mode(False)
 
-            # Remove show button
-            if hasattr(self, 'show_button'):
-                self.show_button.deleteLater()
-                delattr(self, 'show_button')
+            # Update tray icon menu
+            self.presentation_mode_action.setText("Aktiver Presentasjonsmodus")
 
-        self.show()  # Refresh window
-        
+            # Show window and restore geometry
+            self.show()
+            if hasattr(self, 'normal_geometry'):
+                from PyQt6.QtCore import QTimer
+                # First restore window geometry
+                QTimer.singleShot(50, lambda: self.setGeometry(self.normal_geometry))
+                # Then restore widget positions
+                QTimer.singleShot(150, self.restore_widget_positions)
+
+    def save_widget_screen_positions(self):
+        """Save absolute screen positions of all widgets"""
+        self.widget_screen_positions = {}
+
+        for widget in self.dashboard.widgets:
+            if widget is None:
+                continue
+
+            # Get widget's position relative to container
+            widget_pos = widget.pos()
+
+            # Get scroll offset
+            scroll_x = self.dashboard.scroll.horizontalScrollBar().value()
+            scroll_y = self.dashboard.scroll.verticalScrollBar().value()
+
+            # Calculate absolute position on screen
+            # Container position in window + widget position in container - scroll offset + window position on screen
+            container_pos = self.dashboard.container.mapTo(self, widget_pos)
+            screen_pos = self.mapToGlobal(container_pos)
+
+            # Store both screen position and original relative position
+            self.widget_screen_positions[widget] = {
+                'screen_x': screen_pos.x(),
+                'screen_y': screen_pos.y(),
+                'relative_x': widget_pos.x(),
+                'relative_y': widget_pos.y()
+            }
+
+    def restore_widget_positions(self):
+        """Restore widgets to their original relative positions"""
+        if not hasattr(self, 'widget_screen_positions'):
+            return
+
+        for widget, positions in self.widget_screen_positions.items():
+            if widget is not None and not widget.isHidden():
+                # Restore original relative position within container
+                widget.move(positions['relative_x'], positions['relative_y'])
+
+    def go_fullscreen_presentation(self):
+        """Make window fullscreen for presentation mode"""
+        # Get the primary screen
+        screen = QApplication.primaryScreen()
+        screen_geometry = screen.geometry()
+
+        # Set window to cover entire screen
+        self.setGeometry(screen_geometry)
+
+        # Make sure the container fills the entire window
+        self.dashboard.container.setMinimumSize(screen_geometry.width(), screen_geometry.height())
+
+        # Now reposition widgets to maintain their absolute screen positions
+        self.reposition_widgets_for_fullscreen()
+
+    def reposition_widgets_for_fullscreen(self):
+        """Reposition widgets to maintain their absolute screen positions when going fullscreen"""
+        if not hasattr(self, 'widget_screen_positions'):
+            return
+
+        # Get the new window position (should be 0,0 for fullscreen)
+        window_screen_pos = self.pos()
+
+        # Get scroll area and container positions
+        scroll_offset_x = self.dashboard.scroll.horizontalScrollBar().value()
+        scroll_offset_y = self.dashboard.scroll.verticalScrollBar().value()
+
+        for widget, positions in self.widget_screen_positions.items():
+            if widget is None or widget.isHidden():
+                continue
+
+            # Calculate where the widget should be in the container to maintain screen position
+            # screen_position = window_position + container_offset + widget_position - scroll_offset
+            # So: widget_position = screen_position - window_position - container_offset + scroll_offset
+
+            # Get container's position within the window
+            container_in_window = self.dashboard.container.mapTo(self, widget.pos()).x()
+
+            # Calculate new position to maintain same screen coordinates
+            new_x = positions['screen_x'] - window_screen_pos.x() - self.sidebar.width()
+            new_y = positions['screen_y'] - window_screen_pos.y() - self.statusBar().height()
+
+            # Move widget to new position
+            widget.move(int(new_x), int(new_y))
+
     def apply_presentation_styling(self):
-        """Apply transparent styling to main window for presentation mode"""
-        from PyQt6.QtGui import QPalette, QColor
-
-        # Set transparent palette
-        palette = self.palette()
-        palette.setColor(QPalette.ColorRole.Window, QColor(0, 0, 0, 0))
-        palette.setColor(QPalette.ColorRole.Base, QColor(0, 0, 0, 0))
-        palette.setColor(QPalette.ColorRole.AlternateBase, QColor(0, 0, 0, 0))
-        self.setPalette(palette)
-        self.setAutoFillBackground(False)
-
-        # Also on central widget
-        central = self.centralWidget()
-        if central:
-            central.setAutoFillBackground(False)
-            central_palette = central.palette()
-            central_palette.setColor(QPalette.ColorRole.Window, QColor(0, 0, 0, 0))
-            central.setPalette(central_palette)
+        """Apply transparent styling to main window for presentation mode."""
+        self.setStyleSheet("background-color: transparent;")
+        central_widget = self.centralWidget()
+        if central_widget:
+            central_widget.setStyleSheet("background-color: transparent;")
 
     def restore_normal_styling(self):
         """Restore normal styling when exiting presentation mode"""
-        # Restore default palette
-        self.setPalette(self.style().standardPalette())
-        self.setAutoFillBackground(True)
+        self.apply_styles()
 
-        # Restore central widget
-        central = self.centralWidget()
-        if central:
-            central.setAutoFillBackground(True)
-            central.setPalette(self.style().standardPalette())
-
-    def create_show_button(self):
-        """Create visible button to exit presentation mode"""
-        from PyQt6.QtWidgets import QPushButton
+    def keyPressEvent(self, event):
+        """Handle keyboard shortcuts"""
         from PyQt6.QtCore import Qt
 
-        # Create a more visible button with text
-        self.show_button = QPushButton("Exit Presentation Mode", self)
-        self.show_button.setFixedSize(180, 40)
+        # ESC to exit presentation mode
+        if event.key() == Qt.Key.Key_Escape and self.presentation_mode:
+            self.toggle_presentation_mode()
+        else:
+            super().keyPressEvent(event)
 
-        # Position in top-right corner
-        self.show_button.move(self.width() - 190, 10)
-
-        self.show_button.setStyleSheet("""
-            QPushButton {
-                background-color: rgba(13, 110, 253, 200);
-                color: white;
-                border: 2px solid rgba(255, 255, 255, 150);
-                border-radius: 8px;
-                font-size: 12px;
-                font-weight: bold;
-                padding: 8px;
-            }
-            QPushButton:hover {
-                background-color: rgba(13, 110, 253, 255);
-                border: 2px solid white;
-            }
-            QPushButton:pressed {
-                background-color: rgba(10, 88, 202, 255);
-            }
-        """)
-        self.show_button.clicked.connect(self.toggle_presentation_mode)
-        self.show_button.show()
-        self.show_button.raise_()
-
-        # Make sure button stays on top and repositions when window resizes
-        self.show_button.setWindowFlags(Qt.WindowType.WindowStaysOnTopHint)
-
-    def resizeEvent(self, event):
-        """Handle window resize to reposition presentation mode button"""
-        super().resizeEvent(event)
-        if hasattr(self, 'show_button') and self.show_button.isVisible():
-            # Reposition button to top-right corner
-            self.show_button.move(self.width() - 190, 10)
-    
     def set_opacity(self, opacity):
         """Set window and widget opacity (0.0 to 1.0)"""
         self.opacity_level = max(0.1, min(1.0, opacity))
@@ -581,27 +777,67 @@ class MainWindow(QMainWindow):
         # Apply theme to dashboard background
         apply_theme_to_dashboard(self.dashboard, theme_key)
 
-        # Apply theme to all widgets
+        # Apply theme to all widgets, respecting their individual settings
         for widget in self.dashboard.widgets:
             if widget is not None:
-                # Get theme config for this widget type
-                theme_config = get_theme_config(theme_key, widget.widget_type)
+                # Only apply the global theme if the widget is not set to 'custom'
+                if widget.config.get('theme_selector') != 'custom':
+                    theme_config = get_theme_config(theme_key, widget.widget_type)
+                    if theme_config:
+                        # We update a copy to avoid modifying the base theme config
+                        new_config = widget.config.copy()
+                        new_config.update(theme_config)
+                        widget.config = new_config
 
-                # Update widget config with theme colors
-                widget.config.update(theme_config)
-
-                # Apply the updated config
+                # Always apply the config, which will be either the theme's 
+                # or the widget's own custom one.
                 widget.apply_config()
 
     def closeEvent(self, event):
-        # Save settings and clean up
+        """Handle window close event - minimize to tray instead of closing"""
+        if self.tray_icon.isVisible():
+            # Save window geometry before hiding
+            self.save_window_geometry()
+
+            # Save settings (but don't disconnect MQTT)
+            connection_settings = self.settings_panel.get_settings()
+            self.settings.update(connection_settings)
+            save_settings(self.settings)
+
+            # Minimize to tray instead of closing
+            event.ignore()
+            self.hide()
+            self.tray_icon.showMessage(
+                "MQTT Dashboard",
+                "Programmet kjører fortsatt i bakgrunnen.\nBruk systemstatusfeltet for å åpne eller avslutte.",
+                QSystemTrayIcon.MessageIcon.Information,
+                2000
+            )
+        else:
+            # If tray icon is not visible, close normally
+            self.save_and_quit()
+            event.accept()
+
+    def save_and_quit(self):
+        """Save settings and quit application"""
+        # Save window geometry
+        self.save_window_geometry()
+
+        # Save settings
         connection_settings = self.settings_panel.get_settings()
         # Merge connection settings with existing settings to preserve startup_layout
         self.settings.update(connection_settings)
         print(f"[DEBUG] Saving settings on close: {self.settings}")
         save_settings(self.settings)
-        self.mqtt.disconnect()
-        event.accept()
+
+        # Disconnect MQTT
+        if self.mqtt.connected:
+            print("Disconnecting normally")
+            self.mqtt.disconnect()
+
+        # Hide tray icon
+        if hasattr(self, 'tray_icon'):
+            self.tray_icon.hide()
 
 def main():
     app = QApplication(sys.argv)

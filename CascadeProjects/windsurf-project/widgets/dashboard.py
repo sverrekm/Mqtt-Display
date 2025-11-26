@@ -1,5 +1,6 @@
 from PyQt6.QtWidgets import QWidget, QVBoxLayout, QScrollArea, QMessageBox, QFileDialog, QMenu, QInputDialog, QDialog, QComboBox, QLineEdit, QDialogButtonBox, QLabel
 from PyQt6.QtCore import Qt, QRect
+from PyQt6.QtGui import QFont
 import json
 import os
 from .grid_container import GridContainer
@@ -7,14 +8,27 @@ from .grid_container import GridContainer
 class Dashboard(QWidget):
     def __init__(self, mqtt_client, parent=None):
         super().__init__(parent)
-        self.main_window = parent
+        self.main_window = self.get_main_window()
         self.mqtt_client = mqtt_client
         self.widgets = []
         self.current_layout_file = None
         self.grid_size = 20
+        self.presentation_mode = False
         
         self.container = GridContainer(self.grid_size)
-        self.container.setMinimumSize(1200, 800)
+        self.container.setMinimumSize(500, 300)
+        
+        # Add the welcome message label
+        self.welcome_label = QLabel(
+            "Welcome to MQTT Dashboard!\n\n"
+            "Right-click to add a widget or load a layout to get started.",
+            self.container
+        )
+        font = QFont()
+        font.setPointSize(16)
+        self.welcome_label.setFont(font)
+        self.welcome_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.welcome_label.setStyleSheet("color: #888;")
         
         self.scroll = QScrollArea()
         self.scroll.setWidgetResizable(True)
@@ -26,6 +40,28 @@ class Dashboard(QWidget):
         
         self.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.customContextMenuRequested.connect(self.show_context_menu)
+        
+        self._update_welcome_message_visibility()
+
+    def get_main_window(self):
+        parent = self.parent()
+        while parent is not None:
+            if isinstance(parent, QWidget) and parent.isWindow():
+                return parent
+            parent = parent.parent()
+        return None
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        # Center the welcome label within the container
+        self.welcome_label.setGeometry(0, 0, self.container.width(), self.container.height())
+
+    def _update_welcome_message_visibility(self):
+        """Show or hide the welcome message based on widget presence."""
+        if not self.widgets:
+            self.welcome_label.show()
+        else:
+            self.welcome_label.hide()
 
     def set_widget_opacity(self, opacity):
         """Set opacity for all widgets."""
@@ -36,14 +72,18 @@ class Dashboard(QWidget):
 
     def set_presentation_mode(self, enabled):
         """Toggle presentation mode - hide/show frames and enable transparency"""
+        self.presentation_mode = enabled
         if enabled:
+            # Hide welcome message in presentation mode
+            self.welcome_label.hide()
+
             # Disable auto-fill on all levels
             self.setAutoFillBackground(False)
             self.scroll.setAutoFillBackground(False)
             self.scroll.viewport().setAutoFillBackground(False)
             self.container.setAutoFillBackground(False)
 
-            # Set transparent stylesheets
+            # Set transparent stylesheets - everything invisible except widgets
             self.setStyleSheet("""
                 QWidget {
                     background-color: transparent;
@@ -55,6 +95,9 @@ class Dashboard(QWidget):
                     background-color: transparent;
                     background: transparent;
                     border: none;
+                }
+                QScrollArea > QWidget > QWidget {
+                    background-color: transparent;
                 }
             """)
             self.container.setStyleSheet("""
@@ -68,12 +111,18 @@ class Dashboard(QWidget):
             self.container.show_grid = False
             self.container.update()
 
+            # Disable context menu in presentation mode (will be handled separately)
+            self.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+
             # Set presentation mode on all widgets
             for widget in self.widgets:
                 if widget and hasattr(widget, 'set_presentation_mode'):
                     widget.set_presentation_mode(True)
 
         else:
+            # Show welcome message if needed
+            self._update_welcome_message_visibility()
+
             # Restore normal appearance
             self.setAutoFillBackground(True)
             self.scroll.setAutoFillBackground(True)
@@ -88,6 +137,9 @@ class Dashboard(QWidget):
             # Show grid again
             self.container.show_grid = True
             self.container.update()
+
+            # Re-enable context menu
+            self.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
 
             # Restore normal mode on all widgets
             for widget in self.widgets:
@@ -136,6 +188,7 @@ class Dashboard(QWidget):
             widget.setGeometry(x, y, width, height)
             widget.show()
             self.widgets.append(widget)
+            self._update_welcome_message_visibility() # Update visibility
             return widget
         except Exception as e:
             print(f"[ERROR] Failed to add widget: {e}")
@@ -147,6 +200,7 @@ class Dashboard(QWidget):
         """Remove a widget from the dashboard."""
         if widget in self.widgets:
             self.widgets.remove(widget)
+            self._update_welcome_message_visibility()
 
     def _find_next_position(self):
         # Simple logic to find an empty spot. Can be improved.
@@ -161,7 +215,13 @@ class Dashboard(QWidget):
 
     def save_layout(self):
         """Save the current layout to a JSON file."""
-        file_path, _ = QFileDialog.getSaveFileName(self, "Save Layout", self.current_layout_file, "JSON Files (*.json)")
+        if not self.current_layout_file:
+            # Suggest a filename if no layout is loaded
+            suggested_path = os.path.join(os.getcwd(), "my_layout.json")
+        else:
+            suggested_path = self.current_layout_file
+
+        file_path, _ = QFileDialog.getSaveFileName(self, "Save Layout", suggested_path, "JSON Files (*.json)")
         if not file_path:
             return
 
@@ -183,9 +243,8 @@ class Dashboard(QWidget):
             with open(file_path, 'w', encoding='utf-8') as f:
                 json.dump(layout_data, f, indent=4)
             self.current_layout_file = file_path
-            if self.main_window:
-                self.main_window.settings['layout_file'] = file_path
-                self.main_window.save_app_settings()
+            if self.main_window and hasattr(self.main_window, 'statusBar'):
+                self.main_window.statusBar().showMessage(f"Layout saved to {os.path.basename(file_path)}", 5000)
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to save layout: {e}")
 
@@ -228,9 +287,10 @@ class Dashboard(QWidget):
             )
         
         self.current_layout_file = file_path
-        if self.main_window:
-            self.main_window.settings['layout_file'] = file_path
-            self.main_window.save_app_settings()
+        if self.main_window and hasattr(self.main_window, 'statusBar'):
+            self.main_window.statusBar().showMessage(f"Layout '{os.path.basename(file_path)}' loaded", 5000)
+        
+        self._update_welcome_message_visibility()
 
     def clear_widgets(self):
         """Remove all widgets from the dashboard."""
@@ -238,15 +298,34 @@ class Dashboard(QWidget):
             widget.setParent(None)
             widget.deleteLater()
         self.widgets.clear()
+        self._update_welcome_message_visibility() # Update visibility
 
     def show_context_menu(self, position):
         """Show context menu for the dashboard."""
         menu = QMenu(self)
+
+        # If in presentation mode, only show exit option
+        if self.presentation_mode:
+            exit_presentation_action = menu.addAction("Avslutt Presentasjonsmodus")
+            action = menu.exec(self.mapToGlobal(position))
+
+            if action == exit_presentation_action:
+                # Call the main window's toggle_presentation_mode
+                if self.main_window and hasattr(self.main_window, 'toggle_presentation_mode'):
+                    self.main_window.toggle_presentation_mode()
+            return
+
+        # Normal menu when not in presentation mode
         add_action = menu.addAction("Add Widget...")
         menu.addSeparator()
-        save_action = menu.addAction("Save Layout")
-        load_action = menu.addAction("Load Layout")
-        clear_action = menu.addAction("Clear All")
+        save_action = menu.addAction("Save Layout As...")
+        load_action = menu.addAction("Load Layout...")
+        menu.addSeparator()
+        clear_action = menu.addAction("Clear All Widgets")
+
+        # Disable save if there's nothing to save
+        save_action.setEnabled(bool(self.widgets))
+        clear_action.setEnabled(bool(self.widgets))
 
         action = menu.exec(self.mapToGlobal(position))
 
@@ -257,8 +336,8 @@ class Dashboard(QWidget):
         elif action == load_action:
             self.load_layout()
         elif action == clear_action:
-            reply = QMessageBox.question(self, 'Confirm Clear', 'Are you sure you want to remove all widgets?', 
-                                           QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No, 
+            reply = QMessageBox.question(self, 'Confirm Clear', 'Are you sure you want to remove all widgets?',
+                                           QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
                                            QMessageBox.StandardButton.No)
             if reply == QMessageBox.StandardButton.Yes:
                 self.clear_widgets()
@@ -276,6 +355,32 @@ class AddWidgetDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Add Widget")
+        self.setStyleSheet("""
+            QDialog {
+                background-color: #2B2B2B;
+                color: #E0E0E0;
+            }
+            QLabel {
+                color: #E0E0E0;
+            }
+            QLineEdit, QComboBox {
+                background-color: #4A4A4A;
+                color: #E0E0E0;
+                border: 1px solid #5A5A5A;
+                border-radius: 4px;
+                padding: 5px;
+            }
+            QPushButton {
+                background-color: #007ACC;
+                color: white;
+                border: none;
+                padding: 8px 16px;
+                border-radius: 4px;
+            }
+            QPushButton:hover {
+                background-color: #005C99;
+            }
+        """)
         layout = QVBoxLayout(self)
         
         self.widget_type = QComboBox()

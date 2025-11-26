@@ -221,6 +221,18 @@ class MQTTClient(QObject):
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
+
+        # CRITICAL: Set WA_TranslucentBackground FIRST before anything else!
+        # This MUST be set before the window is shown for transparency to work on Windows
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+
+        # Set window icon
+        from PyQt6.QtGui import QIcon
+        import os
+        icon_path = os.path.join(os.path.dirname(__file__), "assets", "icon.ico")
+        if os.path.exists(icon_path):
+            self.setWindowIcon(QIcon(icon_path))
+
         self.mqtt = MQTTClient()
         self.settings = load_settings()
         print(f"[DEBUG] Initial settings loaded: {self.settings}")
@@ -329,6 +341,10 @@ class MainWindow(QMainWindow):
                 use_ssl=settings['use_ssl']
             )
         )
+
+        # Connect opacity and theme signals
+        self.settings_panel.opacity_changed.connect(self.set_opacity)
+        self.settings_panel.theme_changed.connect(self.apply_theme)
         
     def switch_page(self, index):
         self.stacked_widget.setCurrentIndex(index)
@@ -441,63 +457,141 @@ class MainWindow(QMainWindow):
             # Hide sidebar and make window transparent
             self.sidebar.hide()
             self.setWindowOpacity(self.opacity_level)
-            self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
-            self.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowType.WindowStaysOnTopHint)
-            
+            # NOTE: WA_TranslucentBackground is already set in __init__, never remove it!
+            self.setWindowFlags(Qt.WindowType.Window | Qt.WindowType.FramelessWindowHint | Qt.WindowType.WindowStaysOnTopHint)
+
+            # Apply transparent styling to main window
+            self.apply_presentation_styling()
+
             # Hide widget frames and buttons but keep them movable
             self.dashboard.set_presentation_mode(True)
-            
+
             # Create small show button
             self.create_show_button()
-            
+
         else:
             # Show sidebar and restore normal window
             self.sidebar.show()
             self.setWindowOpacity(1.0)
-            self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, False)
+            # NOTE: NEVER remove WA_TranslucentBackground - keep it for future toggles!
             self.setWindowFlags(Qt.WindowType.Window)
-            
+
+            # Restore normal styling
+            self.restore_normal_styling()
+
             # Show widget frames and buttons
             self.dashboard.set_presentation_mode(False)
-            
+
             # Remove show button
             if hasattr(self, 'show_button'):
                 self.show_button.deleteLater()
                 delattr(self, 'show_button')
-        
+
         self.show()  # Refresh window
         
+    def apply_presentation_styling(self):
+        """Apply transparent styling to main window for presentation mode"""
+        from PyQt6.QtGui import QPalette, QColor
+
+        # Set transparent palette
+        palette = self.palette()
+        palette.setColor(QPalette.ColorRole.Window, QColor(0, 0, 0, 0))
+        palette.setColor(QPalette.ColorRole.Base, QColor(0, 0, 0, 0))
+        palette.setColor(QPalette.ColorRole.AlternateBase, QColor(0, 0, 0, 0))
+        self.setPalette(palette)
+        self.setAutoFillBackground(False)
+
+        # Also on central widget
+        central = self.centralWidget()
+        if central:
+            central.setAutoFillBackground(False)
+            central_palette = central.palette()
+            central_palette.setColor(QPalette.ColorRole.Window, QColor(0, 0, 0, 0))
+            central.setPalette(central_palette)
+
+    def restore_normal_styling(self):
+        """Restore normal styling when exiting presentation mode"""
+        # Restore default palette
+        self.setPalette(self.style().standardPalette())
+        self.setAutoFillBackground(True)
+
+        # Restore central widget
+        central = self.centralWidget()
+        if central:
+            central.setAutoFillBackground(True)
+            central.setPalette(self.style().standardPalette())
+
     def create_show_button(self):
-        """Create small discrete button to exit presentation mode"""
+        """Create visible button to exit presentation mode"""
         from PyQt6.QtWidgets import QPushButton
         from PyQt6.QtCore import Qt
-        
-        self.show_button = QPushButton("⚙", self)
-        self.show_button.setFixedSize(30, 30)
-        self.show_button.move(10, 10)
+
+        # Create a more visible button with text
+        self.show_button = QPushButton("Exit Presentation Mode", self)
+        self.show_button.setFixedSize(180, 40)
+
+        # Position in top-right corner
+        self.show_button.move(self.width() - 190, 10)
+
         self.show_button.setStyleSheet("""
             QPushButton {
-                background-color: rgba(0, 0, 0, 100);
+                background-color: rgba(13, 110, 253, 200);
                 color: white;
-                border: 1px solid rgba(255, 255, 255, 100);
-                border-radius: 15px;
-                font-size: 16px;
+                border: 2px solid rgba(255, 255, 255, 150);
+                border-radius: 8px;
+                font-size: 12px;
                 font-weight: bold;
+                padding: 8px;
             }
             QPushButton:hover {
-                background-color: rgba(0, 0, 0, 150);
+                background-color: rgba(13, 110, 253, 255);
+                border: 2px solid white;
+            }
+            QPushButton:pressed {
+                background-color: rgba(10, 88, 202, 255);
             }
         """)
         self.show_button.clicked.connect(self.toggle_presentation_mode)
         self.show_button.show()
         self.show_button.raise_()
+
+        # Make sure button stays on top and repositions when window resizes
+        self.show_button.setWindowFlags(Qt.WindowType.WindowStaysOnTopHint)
+
+    def resizeEvent(self, event):
+        """Handle window resize to reposition presentation mode button"""
+        super().resizeEvent(event)
+        if hasattr(self, 'show_button') and self.show_button.isVisible():
+            # Reposition button to top-right corner
+            self.show_button.move(self.width() - 190, 10)
     
     def set_opacity(self, opacity):
         """Set window and widget opacity (0.0 to 1.0)"""
         self.opacity_level = max(0.1, min(1.0, opacity))
+        # Always update widget opacity (works both in normal and presentation mode)
+        self.dashboard.set_widget_opacity(self.opacity_level)
+        # Only update window opacity in presentation mode
         if self.presentation_mode:
             self.setWindowOpacity(self.opacity_level)
-            self.dashboard.set_widget_opacity(self.opacity_level)
+
+    def apply_theme(self, theme_key):
+        """Apply theme to dashboard and all widgets"""
+        from config.themes import apply_theme_to_dashboard, get_theme_config
+
+        # Apply theme to dashboard background
+        apply_theme_to_dashboard(self.dashboard, theme_key)
+
+        # Apply theme to all widgets
+        for widget in self.dashboard.widgets:
+            if widget is not None:
+                # Get theme config for this widget type
+                theme_config = get_theme_config(theme_key, widget.widget_type)
+
+                # Update widget config with theme colors
+                widget.config.update(theme_config)
+
+                # Apply the updated config
+                widget.apply_config()
 
     def closeEvent(self, event):
         # Save settings and clean up

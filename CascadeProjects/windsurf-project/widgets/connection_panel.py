@@ -1,11 +1,13 @@
 from PyQt6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QFormLayout,
                            QLineEdit, QPushButton, QLabel, QMessageBox, QSpinBox,
-                           QCheckBox, QGroupBox)
+                           QCheckBox, QGroupBox, QSlider, QComboBox)
 from PyQt6.QtCore import Qt, pyqtSignal
 
 class ConnectionPanel(QWidget):
     connection_requested = pyqtSignal(dict)  # Emits connection settings
-    
+    opacity_changed = pyqtSignal(float)  # Emits opacity value (0.0 - 1.0)
+    theme_changed = pyqtSignal(str)  # Emits theme name
+
     def __init__(self, mqtt_client, settings=None, parent=None):
         super().__init__(parent)
         self.mqtt = mqtt_client
@@ -66,13 +68,52 @@ class ConnectionPanel(QWidget):
         # Status
         self.status_label = QLabel("Status: Disconnected")
         self.status_label.setStyleSheet("color: red; font-weight: bold;")
-        
+
+        # Theme Selection Group
+        theme_group = QGroupBox("Tema og Utseende")
+        theme_layout = QFormLayout()
+
+        # Theme selector
+        self.theme_combo = QComboBox()
+        self.load_themes()
+        self.theme_combo.currentTextChanged.connect(self.on_theme_changed)
+        theme_layout.addRow("Tema:", self.theme_combo)
+
+        # Custom theme button
+        custom_theme_btn = QPushButton("Lag Nytt Tema...")
+        custom_theme_btn.clicked.connect(self.create_custom_theme)
+        theme_layout.addRow("", custom_theme_btn)
+
+        theme_group.setLayout(theme_layout)
+
+        # Presentation Mode Group
+        presentation_group = QGroupBox("Presentasjonsmodus")
+        presentation_layout = QFormLayout()
+
+        # Opacity slider
+        opacity_layout = QHBoxLayout()
+        self.opacity_slider = QSlider(Qt.Orientation.Horizontal)
+        self.opacity_slider.setMinimum(10)
+        self.opacity_slider.setMaximum(100)
+        self.opacity_slider.setValue(100)
+        self.opacity_slider.setTickPosition(QSlider.TickPosition.TicksBelow)
+        self.opacity_slider.setTickInterval(10)
+        self.opacity_label = QLabel("100%")
+        self.opacity_slider.valueChanged.connect(self.on_opacity_changed)
+        opacity_layout.addWidget(self.opacity_slider)
+        opacity_layout.addWidget(self.opacity_label)
+        presentation_layout.addRow("Gjennomsiktighet:", opacity_layout)
+
+        presentation_group.setLayout(presentation_layout)
+
         # Add widgets to main layout
         layout.addWidget(connection_group)
         layout.addLayout(button_layout)
         layout.addWidget(self.status_label)
+        layout.addWidget(theme_group)
+        layout.addWidget(presentation_group)
         layout.addStretch()
-        
+
         # Connect MQTT signals
         self.mqtt.connection_status.connect(self.update_connection_status)
         
@@ -157,3 +198,43 @@ class ConnectionPanel(QWidget):
             self.status_label.setStyleSheet("color: red; font-weight: bold;")
             self.connect_btn.setEnabled(True)
             self.disconnect_btn.setEnabled(False)
+
+    def load_themes(self):
+        """Load available themes into the combo box"""
+        from config.themes import get_theme_list, load_custom_themes
+
+        # Load custom themes first
+        load_custom_themes()
+
+        # Get all themes
+        themes = get_theme_list()
+
+        # Add themes to combo box
+        self.theme_combo.clear()
+        for theme_key, theme_name, _ in themes:
+            self.theme_combo.addItem(theme_name, theme_key)
+
+    def on_theme_changed(self, theme_display_name):
+        """Handle theme change"""
+        # Get the theme key from the combo box
+        index = self.theme_combo.currentIndex()
+        if index >= 0:
+            theme_key = self.theme_combo.itemData(index)
+            if theme_key:
+                self.theme_changed.emit(theme_key)
+
+    def create_custom_theme(self):
+        """Open dialog to create a custom theme"""
+        from widgets.custom_theme_dialog import CustomThemeDialog
+
+        dialog = CustomThemeDialog(self)
+        if dialog.exec():
+            # Reload themes to include the new custom theme
+            self.load_themes()
+
+    def on_opacity_changed(self, value):
+        """Handle opacity slider change"""
+        # Convert 0-100 to 0.0-1.0
+        opacity = value / 100.0
+        self.opacity_label.setText(f"{value}%")
+        self.opacity_changed.emit(opacity)

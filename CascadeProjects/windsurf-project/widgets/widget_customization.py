@@ -1,349 +1,282 @@
-from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QFormLayout, 
-                           QLineEdit, QSpinBox, QDoubleSpinBox, QPushButton, 
-                           QColorDialog, QLabel, QComboBox, QCheckBox, QTabWidget, QWidget)
-from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QColor, QPalette
+from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QTabWidget,
+                             QWidget, QLabel, QLineEdit, QCheckBox, QComboBox,
+                             QPushButton, QColorDialog, QDoubleSpinBox, QFormLayout,
+                             QSpinBox, QGroupBox, QScrollArea, QSlider)
+from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtGui import QColor, QPixmap
+from .icon_picker import IconPickerDialog
+from config.themes import get_theme_list, get_theme_config
+from pathlib import Path
 
 class WidgetCustomizationDialog(QDialog):
+    config_changed = pyqtSignal(dict)
+
     def __init__(self, widget_type, current_config=None, parent=None):
         super().__init__(parent)
         self.widget_type = widget_type
         self.config = current_config or {}
-        
-        self.setWindowTitle(f"Tilpass {widget_type.capitalize()} Widget")
-        self.setModal(True)
-        self.setMinimumSize(400, 500)
-        
+        self.setWindowTitle("Widget Settings")
+        self.setMinimumSize(600, 700)  # Increased size for icon settings
         self.init_ui()
-        self.load_current_config()
-    
+        self.load_config()
+
     def init_ui(self):
-        layout = QVBoxLayout(self)
-        
-        # Create tabs for different customization categories
+        main_layout = QVBoxLayout(self)
         self.tabs = QTabWidget()
-        
-        # General tab
+        main_layout.addWidget(self.tabs)
+
         self.general_tab = QWidget()
-        self.init_general_tab()
-        self.tabs.addTab(self.general_tab, "Generelt")
-        
-        # Appearance tab
         self.appearance_tab = QWidget()
+        self.data_tab = QWidget()
+
+        self.init_general_tab()
         self.init_appearance_tab()
-        self.tabs.addTab(self.appearance_tab, "Utseende")
-        
-        # Data tab (for gauge and numeric widgets)
-        if self.widget_type in ['gauge', 'label']:
-            self.data_tab = QWidget()
-            self.init_data_tab()
-            self.tabs.addTab(self.data_tab, "Data & Enheter")
-        
-        layout.addWidget(self.tabs)
-        
-        # Buttons
+        self.init_data_tab()
+
+        self.tabs.addTab(self.general_tab, "General")
+        self.tabs.addTab(self.appearance_tab, "Appearance")
+        if self.widget_type in ['gauge', 'label', 'slider', 'toggle', 'button']:
+             self.tabs.addTab(self.data_tab, "Data & Units")
+
         button_layout = QHBoxLayout()
-        
-        self.preview_btn = QPushButton("Forhåndsvis")
-        self.preview_btn.clicked.connect(self.preview_changes)
-        
-        self.ok_btn = QPushButton("OK")
-        self.ok_btn.clicked.connect(self.accept)
-        
-        self.cancel_btn = QPushButton("Avbryt")
-        self.cancel_btn.clicked.connect(self.reject)
-        
-        button_layout.addWidget(self.preview_btn)
+        ok_btn = QPushButton("OK")
+        cancel_btn = QPushButton("Cancel")
+        ok_btn.clicked.connect(self.accept)
+        cancel_btn.clicked.connect(self.reject)
         button_layout.addStretch()
-        button_layout.addWidget(self.ok_btn)
-        button_layout.addWidget(self.cancel_btn)
-        
-        layout.addLayout(button_layout)
-    
+        button_layout.addWidget(ok_btn)
+        button_layout.addWidget(cancel_btn)
+        main_layout.addLayout(button_layout)
+
     def init_general_tab(self):
         layout = QFormLayout(self.general_tab)
+        self.display_name_edit = QLineEdit()
+        layout.addRow("Display Name:", self.display_name_edit)
+        self.show_title = QCheckBox("Show Title")
+        layout.addRow(self.show_title)
+        self.display_name_edit.textChanged.connect(self._emit_config_changed)
+        self.show_title.stateChanged.connect(self._emit_config_changed)
         
-        # Display name
-        self.display_name = QLineEdit()
-        self.display_name.setPlaceholderText("Navn som vises på widget")
-        layout.addRow("Visningsnavn:", self.display_name)
-        
-        # Description
-        self.description = QLineEdit()
-        self.description.setPlaceholderText("Beskrivelse av widget")
-        layout.addRow("Beskrivelse:", self.description)
-        
-        # Show title
-        self.show_title = QCheckBox("Vis tittel")
-        self.show_title.setChecked(True)
-        layout.addRow("", self.show_title)
-        
-        # Show close button
-        self.show_close = QCheckBox("Vis lukkeknapp")
-        self.show_close.setChecked(True)
-        layout.addRow("", self.show_close)
-    
     def init_appearance_tab(self):
         layout = QFormLayout(self.appearance_tab)
         
-        # Background color
+        self.theme_selector = QComboBox()
+        self.theme_selector.addItem("Use Global Theme", "use_global")
+        self.theme_selector.addItem("Custom", "custom")
+        for theme_key, theme_name, _ in get_theme_list():
+            self.theme_selector.addItem(theme_name, theme_key)
+        self.theme_selector.currentIndexChanged.connect(self._emit_config_changed)
+        layout.addRow("Theme:", self.theme_selector)
+
         self.bg_color_btn = QPushButton()
-        self.bg_color_btn.setFixedHeight(30)
-        self.bg_color_btn.clicked.connect(lambda: self.choose_color('background'))
-        self.bg_color = QColor("#ffffff")
-        self.update_color_button(self.bg_color_btn, self.bg_color)
-        layout.addRow("Bakgrunnsfarge:", self.bg_color_btn)
-        
-        # Text color
         self.text_color_btn = QPushButton()
-        self.text_color_btn.setFixedHeight(30)
-        self.text_color_btn.clicked.connect(lambda: self.choose_color('text'))
-        self.text_color = QColor("#000000")
-        self.update_color_button(self.text_color_btn, self.text_color)
-        layout.addRow("Tekstfarge:", self.text_color_btn)
-        
-        # Border color
         self.border_color_btn = QPushButton()
-        self.border_color_btn.setFixedHeight(30)
-        self.border_color_btn.clicked.connect(lambda: self.choose_color('border'))
-        self.border_color = QColor("#dee2e6")
-        self.update_color_button(self.border_color_btn, self.border_color)
-        layout.addRow("Kantfarge:", self.border_color_btn)
+        layout.addRow("Background Color:", self.bg_color_btn)
+        layout.addRow("Text Color:", self.text_color_btn)
+        layout.addRow("Border Color:", self.border_color_btn)
+        self.bg_color_btn.clicked.connect(lambda: self._choose_color('bg_color'))
+        self.text_color_btn.clicked.connect(lambda: self._choose_color('text_color'))
+        self.border_color_btn.clicked.connect(lambda: self._choose_color('border_color'))
         
-        # Accent color (for gauges, progress bars etc.)
-        if self.widget_type in ['gauge', 'slider']:
+        if self.widget_type in ['gauge', 'slider', 'toggle']:
             self.accent_color_btn = QPushButton()
-            self.accent_color_btn.setFixedHeight(30)
-            self.accent_color_btn.clicked.connect(lambda: self.choose_color('accent'))
-            self.accent_color = QColor("#0d6efd")
-            self.update_color_button(self.accent_color_btn, self.accent_color)
-            layout.addRow("Aksentfarge:", self.accent_color_btn)
-        
-        # Font size
-        self.font_size = QSpinBox()
-        self.font_size.setRange(8, 48)
-        self.font_size.setValue(12)
-        self.font_size.setSuffix(" px")
-        layout.addRow("Skriftstørrelse:", self.font_size)
-        
-        # Border width
-        self.border_width = QSpinBox()
-        self.border_width.setRange(0, 10)
-        self.border_width.setValue(2)
-        self.border_width.setSuffix(" px")
-        layout.addRow("Kanttykkelse:", self.border_width)
-        
-        # Border radius
-        self.border_radius = QSpinBox()
-        self.border_radius.setRange(0, 20)
-        self.border_radius.setValue(6)
-        self.border_radius.setSuffix(" px")
-        layout.addRow("Kantavrunding:", self.border_radius)
-    
+            layout.addRow("Accent Color:", self.accent_color_btn)
+            self.accent_color_btn.clicked.connect(lambda: self._choose_color('accent_color'))
+        if self.widget_type == 'toggle':
+            self.toggle_off_color_btn = QPushButton()
+            self.toggle_handle_color_btn = QPushButton()
+            layout.addRow("Toggle OFF Color:", self.toggle_off_color_btn)
+            layout.addRow("Toggle Handle Color:", self.toggle_handle_color_btn)
+            self.toggle_off_color_btn.clicked.connect(lambda: self._choose_color('toggle_off_color'))
+            self.toggle_handle_color_btn.clicked.connect(lambda: self._choose_color('toggle_handle_color'))
+
+        self.font_size_spin = QSpinBox()
+        self.font_size_spin.setRange(8, 72)
+        layout.addRow("Font Size:", self.font_size_spin)
+        self.font_size_spin.valueChanged.connect(self._emit_config_changed)
+
+        # Icon settings group
+        icon_group = QGroupBox("Ikon-innstillinger")
+        icon_layout = QFormLayout()
+
+        # Icon picker button
+        icon_btn_layout = QHBoxLayout()
+        self.icon_display = QLabel("Ingen ikon")
+        self.icon_display.setStyleSheet("""
+            QLabel {
+                background-color: #333333;
+                border: 1px solid #555555;
+                padding: 8px;
+                border-radius: 4px;
+                font-size: 24px;
+                min-width: 60px;
+                min-height: 60px;
+            }
+        """)
+        self.icon_display.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.choose_icon_btn = QPushButton("Velg ikon...")
+        self.choose_icon_btn.clicked.connect(self._choose_icon)
+        self.clear_icon_btn = QPushButton("Fjern ikon")
+        self.clear_icon_btn.clicked.connect(self._clear_icon)
+        icon_btn_layout.addWidget(self.icon_display)
+        icon_btn_layout.addWidget(self.choose_icon_btn)
+        icon_btn_layout.addWidget(self.clear_icon_btn)
+        icon_btn_layout.addStretch()
+        icon_layout.addRow("Ikon:", icon_btn_layout)
+
+        # Icon size
+        self.icon_size_spin = QSpinBox()
+        self.icon_size_spin.setRange(8, 128)
+        self.icon_size_spin.setValue(24)
+        self.icon_size_spin.valueChanged.connect(self._emit_config_changed)
+        icon_layout.addRow("Ikonstørrelse (px):", self.icon_size_spin)
+
+        # Icon position
+        self.icon_position_combo = QComboBox()
+        self.icon_position_combo.addItems(["left", "right", "top", "bottom", "only"])
+        self.icon_position_combo.currentTextChanged.connect(self._emit_config_changed)
+        icon_layout.addRow("Ikonposisjon:", self.icon_position_combo)
+
+        icon_group.setLayout(icon_layout)
+        layout.addRow(icon_group)
+
+        # Opacity slider
+        opacity_layout = QHBoxLayout()
+        self.opacity_slider = QSlider(Qt.Orientation.Horizontal)
+        self.opacity_slider.setMinimum(0)
+        self.opacity_slider.setMaximum(100)
+        self.opacity_slider.setValue(100)
+        self.opacity_slider.setTickPosition(QSlider.TickPosition.TicksBelow)
+        self.opacity_slider.setTickInterval(10)
+        self.opacity_label = QLabel("100%")
+        self.opacity_slider.valueChanged.connect(self._on_opacity_changed)
+        opacity_layout.addWidget(self.opacity_slider)
+        opacity_layout.addWidget(self.opacity_label)
+        layout.addRow("Gjennomsiktighet:", opacity_layout)
+
     def init_data_tab(self):
         layout = QFormLayout(self.data_tab)
-        
-        # Unit
         self.unit = QLineEdit()
-        self.unit.setPlaceholderText("f.eks. °C, kW, %")
-        layout.addRow("Enhet:", self.unit)
-        
-        # Decimal places
-        self.decimal_places = QSpinBox()
-        self.decimal_places.setRange(0, 6)
-        self.decimal_places.setValue(1)
-        layout.addRow("Desimalplasser:", self.decimal_places)
-        
-        # Conversion factor
-        self.conversion_factor = QDoubleSpinBox()
-        self.conversion_factor.setRange(-999999.0, 999999.0)
-        self.conversion_factor.setValue(1.0)
-        self.conversion_factor.setDecimals(6)
-        layout.addRow("Omregningsfaktor:", self.conversion_factor)
-        
-        # Conversion offset
-        self.conversion_offset = QDoubleSpinBox()
-        self.conversion_offset.setRange(-999999.0, 999999.0)
-        self.conversion_offset.setValue(0.0)
-        self.conversion_offset.setDecimals(6)
-        layout.addRow("Omregningsoffset:", self.conversion_offset)
-        
-        # Min/Max values (for gauges)
-        if self.widget_type == 'gauge':
-            self.min_value = QDoubleSpinBox()
-            self.min_value.setRange(-999999.0, 999999.0)
-            self.min_value.setValue(0.0)
-            layout.addRow("Minimumsverdi:", self.min_value)
-            
-            self.max_value = QDoubleSpinBox()
-            self.max_value.setRange(-999999.0, 999999.0)
-            self.max_value.setValue(100.0)
-            layout.addRow("Maksimumsverdi:", self.max_value)
-            
-            # Warning thresholds
-            self.warning_enabled = QCheckBox("Aktiver advarselsgrenser")
-            layout.addRow("", self.warning_enabled)
-            
-            self.warning_low = QDoubleSpinBox()
-            self.warning_low.setRange(-999999.0, 999999.0)
-            self.warning_low.setValue(20.0)
-            layout.addRow("Lav advarsel:", self.warning_low)
-            
-            self.warning_high = QDoubleSpinBox()
-            self.warning_high.setRange(-999999.0, 999999.0)
-            self.warning_high.setValue(80.0)
-            layout.addRow("Høy advarsel:", self.warning_high)
-            
-            # Warning colors
-            self.warning_color_btn = QPushButton()
-            self.warning_color_btn.setFixedHeight(30)
-            self.warning_color_btn.clicked.connect(lambda: self.choose_color('warning'))
-            self.warning_color = QColor("#ffc107")
-            self.update_color_button(self.warning_color_btn, self.warning_color)
-            layout.addRow("Advarselsfarge:", self.warning_color_btn)
-            
-            self.critical_color_btn = QPushButton()
-            self.critical_color_btn.setFixedHeight(30)
-            self.critical_color_btn.clicked.connect(lambda: self.choose_color('critical'))
-            self.critical_color = QColor("#dc3545")
-            self.update_color_button(self.critical_color_btn, self.critical_color)
-            layout.addRow("Kritisk farge:", self.critical_color_btn)
-    
-    def choose_color(self, color_type):
-        """Open color picker dialog"""
-        # Map color_type to actual attribute name
-        color_map = {
-            'background': 'bg_color',
-            'text': 'text_color',
-            'border': 'border_color',
-            'accent': 'accent_color',
-            'warning': 'warning_color',
-            'critical': 'critical_color'
-        }
-        
-        attr_name = color_map.get(color_type, f"{color_type}_color")
-        current_color = getattr(self, attr_name)
-        color = QColorDialog.getColor(current_color, self, f"Velg {color_type} farge")
-        
+        layout.addRow("Unit:", self.unit)
+        self.unit.textChanged.connect(self._emit_config_changed)
+        # Add other data-related fields here...
+
+    def _choose_color(self, color_attr):
+        current_color = QColor(self.config.get(color_attr, "#ffffff"))
+        color = QColorDialog.getColor(current_color, self, f"Select {color_attr.replace('_', ' ').title()}")
         if color.isValid():
-            setattr(self, attr_name, color)
-            button = getattr(self, f"{attr_name}_btn")
-            self.update_color_button(button, color)
-    
-    def update_color_button(self, button, color):
-        """Update button appearance to show selected color"""
-        button.setStyleSheet(f"""
-            QPushButton {{
-                background-color: {color.name()};
-                border: 2px solid #333;
-                border-radius: 4px;
-            }}
-        """)
-        button.setText(color.name())
-    
-    def load_current_config(self):
-        """Load current widget configuration into dialog"""
-        if not self.config:
-            return
+            button = getattr(self, f"{color_attr}_btn")
+            button.setStyleSheet(f"background-color: {color.name()};")
+            self.config[color_attr] = color.name()
+            self._emit_config_changed()
+
+    def _choose_icon(self):
+        """Open icon picker dialog"""
+        current_icon = self.config.get('icon_data', '')
+        dialog = IconPickerDialog(current_icon, self)
+        if dialog.exec():
+            icon_data = dialog.get_icon_data()
+            self.config['icon_data'] = icon_data['icon']
+            self.config['icon_is_text'] = icon_data['is_text']
+            self._update_icon_display()
+            self._emit_config_changed()
+
+    def _clear_icon(self):
+        """Clear selected icon"""
+        self.config['icon_data'] = ''
+        self.config['icon_is_text'] = False
+        self._update_icon_display()
+        self._emit_config_changed()
+
+    def _update_icon_display(self):
+        """Update the icon display preview"""
+        icon_data = self.config.get('icon_data', '')
+        is_text = self.config.get('icon_is_text', False)
+
+        if not icon_data:
+            self.icon_display.setText("Ingen ikon")
+            self.icon_display.setPixmap(QPixmap())
+        elif is_text:
+            # Display text/emoji icon
+            self.icon_display.setText(icon_data)
+            self.icon_display.setPixmap(QPixmap())
+        else:
+            # Display image icon
+            self.icon_display.setText("")
+            if Path(icon_data).exists():
+                pixmap = QPixmap(icon_data)
+                if not pixmap.isNull():
+                    scaled = pixmap.scaled(
+                        48, 48,
+                        Qt.AspectRatioMode.KeepAspectRatio,
+                        Qt.TransformationMode.SmoothTransformation
+                    )
+                    self.icon_display.setPixmap(scaled)
+                else:
+                    self.icon_display.setText("❌")
+            else:
+                self.icon_display.setText("❌")
+
+    def _on_opacity_changed(self, value):
+        """Handle opacity slider change"""
+        self.opacity_label.setText(f"{value}%")
+        self.config['individual_opacity'] = value / 100.0
+        self._emit_config_changed()
+
+    def _emit_config_changed(self):
+        self.config_changed.emit(self.get_config())
         
-        # General settings
-        self.display_name.setText(self.config.get('display_name', ''))
-        self.description.setText(self.config.get('description', ''))
+    def load_config(self):
+        self.display_name_edit.setText(self.config.get('display_name', ''))
         self.show_title.setChecked(self.config.get('show_title', True))
-        self.show_close.setChecked(self.config.get('show_close', True))
-        
-        # Appearance settings
-        if 'bg_color' in self.config:
-            self.bg_color = QColor(self.config['bg_color'])
-            self.update_color_button(self.bg_color_btn, self.bg_color)
-        
-        if 'text_color' in self.config:
-            self.text_color = QColor(self.config['text_color'])
-            self.update_color_button(self.text_color_btn, self.text_color)
-        
-        if 'border_color' in self.config:
-            self.border_color = QColor(self.config['border_color'])
-            self.update_color_button(self.border_color_btn, self.border_color)
-        
-        if hasattr(self, 'accent_color') and 'accent_color' in self.config:
-            self.accent_color = QColor(self.config['accent_color'])
-            self.update_color_button(self.accent_color_btn, self.accent_color)
-        
-        self.font_size.setValue(self.config.get('font_size', 12))
-        self.border_width.setValue(self.config.get('border_width', 2))
-        self.border_radius.setValue(self.config.get('border_radius', 6))
-        
-        # Data settings
-        if hasattr(self, 'unit'):
-            self.unit.setText(self.config.get('unit', ''))
-            self.decimal_places.setValue(self.config.get('decimal_places', 1))
-            self.conversion_factor.setValue(self.config.get('conversion_factor', 1.0))
-            self.conversion_offset.setValue(self.config.get('conversion_offset', 0.0))
-        
-        # Gauge specific settings
-        if hasattr(self, 'min_value'):
-            self.min_value.setValue(self.config.get('min_value', 0.0))
-            self.max_value.setValue(self.config.get('max_value', 100.0))
-            self.warning_enabled.setChecked(self.config.get('warning_enabled', False))
-            self.warning_low.setValue(self.config.get('warning_low', 20.0))
-            self.warning_high.setValue(self.config.get('warning_high', 80.0))
-            
-            if 'warning_color' in self.config:
-                self.warning_color = QColor(self.config['warning_color'])
-                self.update_color_button(self.warning_color_btn, self.warning_color)
-            
-            if 'critical_color' in self.config:
-                self.critical_color = QColor(self.config['critical_color'])
-                self.update_color_button(self.critical_color_btn, self.critical_color)
-    
+
+        theme = self.config.get('theme_selector', 'use_global')
+        index = self.theme_selector.findData(theme)
+        if index != -1: self.theme_selector.setCurrentIndex(index)
+
+        def load_color(attr, default):
+            color = QColor(self.config.get(attr, default))
+            if hasattr(self, f"{attr}_btn"):
+                getattr(self, f"{attr}_btn").setStyleSheet(f"background-color: {color.name()};")
+
+        load_color('bg_color', '#1F2428')
+        load_color('text_color', '#D9D9D9')
+        load_color('border_color', '#2F3338')
+        if hasattr(self, 'accent_color_btn'): load_color('accent_color', '#0d6efd')
+        if hasattr(self, 'toggle_off_color_btn'): load_color('toggle_off_color', '#6c757d')
+        if hasattr(self, 'toggle_handle_color_btn'): load_color('toggle_handle_color', '#ffffff')
+
+        self.font_size_spin.setValue(self.config.get('font_size', 12))
+        if hasattr(self, 'unit'): self.unit.setText(self.config.get('unit', ''))
+
+        # Load icon settings
+        if hasattr(self, 'icon_size_spin'):
+            self.icon_size_spin.setValue(self.config.get('icon_size', 24))
+        if hasattr(self, 'icon_position_combo'):
+            icon_pos = self.config.get('icon_position', 'left')
+            index = self.icon_position_combo.findText(icon_pos)
+            if index != -1: self.icon_position_combo.setCurrentIndex(index)
+        if hasattr(self, 'opacity_slider'):
+            opacity = self.config.get('individual_opacity', 1.0)
+            self.opacity_slider.setValue(int(opacity * 100))
+            self.opacity_label.setText(f"{int(opacity * 100)}%")
+
+        # Update icon display
+        if hasattr(self, 'icon_display'):
+            self._update_icon_display()
+
     def get_config(self):
-        """Get the current configuration from dialog"""
-        config = {
-            # General
-            'display_name': self.display_name.text(),
-            'description': self.description.text(),
-            'show_title': self.show_title.isChecked(),
-            'show_close': self.show_close.isChecked(),
-            
-            # Appearance
-            'bg_color': self.bg_color.name(),
-            'text_color': self.text_color.name(),
-            'border_color': self.border_color.name(),
-            'font_size': self.font_size.value(),
-            'border_width': self.border_width.value(),
-            'border_radius': self.border_radius.value(),
-        }
-        
-        # Add accent color if available
-        if hasattr(self, 'accent_color'):
-            config['accent_color'] = self.accent_color.name()
-        
-        # Data settings
-        if hasattr(self, 'unit'):
-            config.update({
-                'unit': self.unit.text(),
-                'decimal_places': self.decimal_places.value(),
-                'conversion_factor': self.conversion_factor.value(),
-                'conversion_offset': self.conversion_offset.value(),
-            })
-        
-        # Gauge specific settings
-        if hasattr(self, 'min_value'):
-            config.update({
-                'min_value': self.min_value.value(),
-                'max_value': self.max_value.value(),
-                'warning_enabled': self.warning_enabled.isChecked(),
-                'warning_low': self.warning_low.value(),
-                'warning_high': self.warning_high.value(),
-                'warning_color': self.warning_color.name(),
-                'critical_color': self.critical_color.name(),
-            })
-        
-        return config
-    
-    def preview_changes(self):
-        """Preview the changes (could be implemented to show a preview widget)"""
-        # For now, just show a message with the current config
-        config = self.get_config()
-        print(f"Preview config: {config}")
-        # TODO: Implement actual preview functionality
+        self.config['display_name'] = self.display_name_edit.text()
+        self.config['show_title'] = self.show_title.isChecked()
+        self.config['theme_selector'] = self.theme_selector.currentData()
+        self.config['font_size'] = self.font_size_spin.value()
+        if hasattr(self, 'unit'): self.config['unit'] = self.unit.text()
+
+        # Save icon settings
+        if hasattr(self, 'icon_size_spin'):
+            self.config['icon_size'] = self.icon_size_spin.value()
+        if hasattr(self, 'icon_position_combo'):
+            self.config['icon_position'] = self.icon_position_combo.currentText()
+
+        # Note: color attributes and icon_data are set directly in their respective methods
+        return self.config

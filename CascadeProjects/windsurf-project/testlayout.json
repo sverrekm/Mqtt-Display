@@ -1,22 +1,51 @@
 [
-  {
-    "type": "gauge",
-    "topic": "temp-ute",
-    "value": 14.2
-  },
-  {
-    "type": "slider",
-    "topic": "lys kontor",
-    "value": 0
-  },
-  {
-    "type": "gauge",
-    "topic": "total_effekt",
-    "value": 6406.0
-  },
-  {
-    "type": "label",
-    "topic": "total_effekt",
-    "value": "6147"
-  }
+    {
+        "type": "gauge",
+        "topic": "temp-ute",
+        "x": 20,
+        "y": 20,
+        "width": 200,
+        "height": 160,
+        "config": {
+            "type": "gauge"
+        }
+    },
+    {
+        "type": "slider",
+        "topic": "lys kontor",
+        "x": 220,
+        "y": 20,
+        "width": 200,
+        "height": 160,
+        "config": {}
+    },
+    {
+        "type": "gauge",
+        "topic": "total_effekt",
+        "x": 420,
+        "y": 20,
+        "width": 200,
+        "height": 160,
+        "config": {
+            "type": "gauge"
+        }
+    },
+    {
+        "type": "label",
+        "topic": "total_effekt",
+        "x": 620,
+        "y": 20,
+        "width": 200,
+        "height": 160,
+        "config": {}
+    },
+    {
+        "type": "button",
+        "topic": "Kveld",
+        "x": 220,
+        "y": 180,
+        "width": 200,
+        "height": 160,
+        "config": {}
+    }
 ]

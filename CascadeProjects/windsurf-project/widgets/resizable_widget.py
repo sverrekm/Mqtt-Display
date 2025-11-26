@@ -1,6 +1,7 @@
-from PyQt6.QtWidgets import QFrame, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QMenu
-from PyQt6.QtCore import Qt, QPoint, QRect, QSize
-from PyQt6.QtGui import QPainter, QColor, QPen, QAction
+from PyQt6.QtWidgets import QFrame, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QMenu, QDialog, QGraphicsDropShadowEffect, QWidget, QSizePolicy
+from PyQt6.QtCore import Qt, QPoint, QRect, QSize, pyqtSignal
+from PyQt6.QtGui import QPainter, QColor, QPen, QAction, QPixmap, QIcon
+from pathlib import Path
 
 class ResizableWidget(QFrame):
     def __init__(self, widget_type, topic, mqtt_client=None, parent=None, config=None):
@@ -11,59 +12,87 @@ class ResizableWidget(QFrame):
         self.mqtt_client = mqtt_client
         self.presentation_mode = False
         
-        # Grid and resize settings
+        self.error_state = False
+        self.error_message = ""
+        
         self.grid_size = 20
         self.resize_margin = 8
         
-        # State variables
         self.dragging = False
         self.resizing = False
         self.resize_direction = None
         self.offset = QPoint()
         self.original_geometry = None
         
-        # Setup widget
+        # --- Core Refactoring for Styling ---
+        # Main frame is a transparent container for resizing and context menu
         self.setMinimumSize(100, 80)
-        
-        # Enable mouse tracking for resize cursors
         self.setMouseTracking(True)
-        
-        # Enable context menu
         self.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.customContextMenuRequested.connect(self.show_context_menu)
+        self.setStyleSheet("QFrame { background: transparent; border: none; }")
+
+        # Inner container handles all appearance (background, border)
+        self.background_container = QWidget(self)
+        self.background_container.setObjectName("widget_background")
         
-        # Setup UI
+        # Add Drop Shadow
+        shadow = QGraphicsDropShadowEffect()
+        shadow.setBlurRadius(15)
+        shadow.setColor(QColor(0, 0, 0, 160))
+        shadow.setOffset(0, 4)
+        self.background_container.setGraphicsEffect(shadow)
+        
+        main_layout = QVBoxLayout(self)
+        main_layout.setContentsMargins(0, 0, 0, 0)
+        main_layout.addWidget(self.background_container)
+
+        # Setup UI inside the background container
         self.init_ui()
+
+        # NOTE: apply_config() is NOT called here - subclasses must call it after init_content()
         
-        # Apply configuration
-        self.apply_config()
-    
     def init_ui(self):
-        """Initialize the widget UI"""
-        self.layout = QVBoxLayout(self)
+        """Initialize UI elements inside the background_container."""
+        self.layout = QVBoxLayout(self.background_container) # Use self.layout for base ResizableWidget layout
         self.layout.setContentsMargins(8, 8, 8, 8)
         self.layout.setSpacing(4)
-        
+
         # Title bar
         title_layout = QHBoxLayout()
         title_layout.setContentsMargins(0, 0, 0, 0)
-        
-        self.title_label = QLabel(f"{self.widget_type}: {self.topic}")
-        
+        title_layout.setSpacing(4)
+
+        self.icon_label = QLabel()
+        self.icon_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.icon_label.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+        self.icon_label.hide()
+
+        display_name = self.config.get('display_name', '')
+        self.title_label = QLabel(display_name or self.topic)
+
         self.close_btn = QPushButton("×")
         self.close_btn.setFixedSize(20, 20)
-        self.close_btn.clicked.connect(self.deleteLater)
-        
-        title_layout.addWidget(self.title_label)
-        title_layout.addStretch()
-        title_layout.addWidget(self.close_btn)
-        
+        self.close_btn.clicked.connect(self.safe_delete)
+
+        title_layout.addWidget(self.icon_label, 0)
+        title_layout.addWidget(self.title_label, 0)
+        title_layout.addStretch(1)
+        title_layout.addWidget(self.close_btn, 0)
+
         self.layout.addLayout(title_layout)
-        
-        # Content area
-        self.content_layout = QVBoxLayout()
+
+        # Content area (this is where actual widget content goes)
+        self.content_layout = QVBoxLayout() # Renamed from self.content_layout to self._content_layout to avoid confusion
         self.content_layout.setContentsMargins(4, 4, 4, 4)
         self.layout.addLayout(self.content_layout)
+
+        # Error state label (initially hidden)
+        self.error_label = QLabel("⚠️\nInvalid Data")
+        self.error_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.error_label.setWordWrap(True)
+        self.layout.addWidget(self.error_label)
+        self.error_label.hide()
     
     def snap_to_grid(self, pos):
         """Snap position to grid"""
@@ -87,56 +116,44 @@ class ResizableWidget(QFrame):
         top = pos.y() <= margin
         bottom = pos.y() >= rect.height() - margin
         
-        if left and top:
-            return 'nw'
-        elif right and top:
-            return 'ne'
-        elif left and bottom:
-            return 'sw'
-        elif right and bottom:
-            return 'se'
-        elif left:
-            return 'w'
-        elif right:
-            return 'e'
-        elif top:
-            return 'n'
-        elif bottom:
-            return 's'
+        if left and top: return 'nw'
+        elif right and top: return 'ne'
+        elif left and bottom: return 'sw'
+        elif right and bottom: return 'se'
+        elif left: return 'w'
+        elif right: return 'e'
+        elif top: return 'n'
+        elif bottom: return 's'
         return None
     
     def get_resize_cursor(self, direction):
         """Get cursor for resize direction"""
         cursors = {
-            'n': Qt.CursorShape.SizeVerCursor,
-            's': Qt.CursorShape.SizeVerCursor,
-            'e': Qt.CursorShape.SizeHorCursor,
-            'w': Qt.CursorShape.SizeHorCursor,
-            'ne': Qt.CursorShape.SizeBDiagCursor,
-            'sw': Qt.CursorShape.SizeBDiagCursor,
-            'nw': Qt.CursorShape.SizeFDiagCursor,
-            'se': Qt.CursorShape.SizeFDiagCursor
+            'n': Qt.CursorShape.SizeVerCursor, 's': Qt.CursorShape.SizeVerCursor,
+            'e': Qt.CursorShape.SizeHorCursor, 'w': Qt.CursorShape.SizeHorCursor,
+            'ne': Qt.CursorShape.SizeBDiagCursor, 'sw': Qt.CursorShape.SizeBDiagCursor,
+            'nw': Qt.CursorShape.SizeFDiagCursor, 'se': Qt.CursorShape.SizeFDiagCursor
         }
         return cursors.get(direction, Qt.CursorShape.ArrowCursor)
     
     def mousePressEvent(self, event):
-        if event.button() == Qt.MouseButton.LeftButton and not self.presentation_mode:
-            self.offset = event.position().toPoint()
+        if self.presentation_mode: return
             
-            # Check if we're near an edge for resizing
-            resize_dir = self.get_resize_direction(event.position().toPoint())
-            if resize_dir:
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.offset = event.position().toPoint()
+            pos = event.position().toPoint()
+            self.resize_direction = self.get_resize_direction(pos)
+            
+            if self.resize_direction:
                 self.resizing = True
-                self.resize_direction = resize_dir
-                self.setCursor(self.get_resize_cursor(resize_dir))
+                self.original_geometry = self.geometry()
             else:
                 self.dragging = True
-                self.setCursor(Qt.CursorShape.ClosedHandCursor)
-        else:
-            self.dragging = True
             self.setCursor(Qt.CursorShape.ClosedHandCursor)
     
     def mouseMoveEvent(self, event):
+        if self.presentation_mode: return
+            
         if self.resizing and self.resize_direction:
             self.handle_resize(event.pos())
         elif self.dragging:
@@ -144,303 +161,218 @@ class ResizableWidget(QFrame):
             snapped_pos = self.snap_to_grid(new_pos)
             self.move(snapped_pos)
         else:
-            # Update cursor when hovering (only if not in presentation mode)
             if not self.presentation_mode:
                 resize_dir = self.get_resize_direction(event.position().toPoint())
-                if resize_dir:
-                    self.setCursor(self.get_resize_cursor(resize_dir))
-                else:
-                    self.setCursor(Qt.CursorShape.ArrowCursor)
+                if resize_dir: self.setCursor(self.get_resize_cursor(resize_dir))
+                else: self.setCursor(Qt.CursorShape.ArrowCursor)
     
     def handle_resize(self, pos):
-        """Handle widget resizing"""
-        if not self.original_geometry:
-            return
-            
-        orig = self.original_geometry
-        new_rect = QRect(orig)
-        
-        if 'n' in self.resize_direction:
-            new_rect.setTop(orig.top() + pos.y())
-        if 's' in self.resize_direction:
-            new_rect.setBottom(orig.top() + pos.y())
-        if 'w' in self.resize_direction:
-            new_rect.setLeft(orig.left() + pos.x())
-        if 'e' in self.resize_direction:
-            new_rect.setRight(orig.left() + pos.x())
-        
-        # Ensure minimum size
+        if not self.original_geometry: return
+        orig, new_rect = self.original_geometry, QRect(self.original_geometry)
+
+        if 'n' in self.resize_direction: new_rect.setTop(orig.top() + pos.y())
+        if 's' in self.resize_direction: new_rect.setBottom(orig.top() + pos.y())
+        if 'w' in self.resize_direction: new_rect.setLeft(orig.left() + pos.x())
+        if 'e' in self.resize_direction: new_rect.setRight(orig.left() + pos.x())
+
         if new_rect.width() < self.minimumWidth():
-            if 'w' in self.resize_direction:
-                new_rect.setLeft(new_rect.right() - self.minimumWidth())
-            else:
-                new_rect.setRight(new_rect.left() + self.minimumWidth())
-        
+            if 'w' in self.resize_direction: new_rect.setLeft(new_rect.right() - self.minimumWidth())
+            else: new_rect.setRight(new_rect.left() + self.minimumWidth())
+
         if new_rect.height() < self.minimumHeight():
-            if 'n' in self.resize_direction:
-                new_rect.setTop(new_rect.bottom() - self.minimumHeight())
-            else:
-                new_rect.setBottom(new_rect.top() + self.minimumHeight())
-        
-        # Snap to grid
+            if 'n' in self.resize_direction: new_rect.setTop(new_rect.bottom() - self.minimumHeight())
+            else: new_rect.setBottom(new_rect.top() + self.minimumHeight())
+
+        # Snap size to grid and update geometry
         snapped_size = self.snap_size_to_grid(new_rect.size())
-        new_rect.setSize(snapped_size)
-        
-        self.setGeometry(new_rect)
+        snapped_pos = self.snap_to_grid(new_rect.topLeft())
+        self.setGeometry(QRect(snapped_pos, snapped_size))
     
     def mouseReleaseEvent(self, event):
-        self.dragging = False
-        self.resizing = False
-        self.resize_direction = None
-        self.original_geometry = None
+        if self.presentation_mode: return
+        self.dragging, self.resizing, self.resize_direction, self.original_geometry = False, False, None, None
         self.setCursor(Qt.CursorShape.ArrowCursor)
     
     def leaveEvent(self, event):
-        """Reset cursor when leaving widget"""
-        if not self.resizing:
-            self.setCursor(Qt.CursorShape.ArrowCursor)
+        if not self.resizing and not self.presentation_mode: self.setCursor(Qt.CursorShape.ArrowCursor)
     
     def paintEvent(self, event):
-        """Custom paint event to show resize handles"""
         super().paintEvent(event)
-        
+        if self.presentation_mode: return
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         
-        # Draw resize handles in corners
-        handle_size = 6
-        rect = self.rect()
-        
-        # Handle color
-        handle_color = QColor(0, 123, 255, 150)  # Semi-transparent blue
+        handle_size, rect = 6, self.rect()
+        border_color = self.config.get('border_color', '#666666')
+        handle_color = QColor(border_color)
+        handle_color.setAlpha(100)
         painter.setBrush(handle_color)
-        painter.setPen(QPen(QColor(0, 123, 255), 1))
+        painter.setPen(QPen(QColor(border_color), 1))
         
-        # Draw corner handles
         positions = [
-            (rect.left(), rect.top()),           # Top-left
-            (rect.right() - handle_size, rect.top()),  # Top-right
-            (rect.left(), rect.bottom() - handle_size),  # Bottom-left
-            (rect.right() - handle_size, rect.bottom() - handle_size)  # Bottom-right
+            (rect.left(), rect.top()), (rect.right() - handle_size, rect.top()),
+            (rect.left(), rect.bottom() - handle_size), (rect.right() - handle_size, rect.bottom() - handle_size)
         ]
-        
-        for x, y in positions:
-            painter.drawRect(x, y, handle_size, handle_size)
+        for x, y in positions: painter.drawRect(x, y, handle_size, handle_size)
     
     def show_context_menu(self, position):
-        """Show context menu for widget customization"""
+        if self.presentation_mode: return
+
         menu = QMenu(self)
-        
-        customize_action = QAction("Tilpass widget...", self)
+        customize_action = QAction("Customize Widget...", self)
         customize_action.triggered.connect(self.customize_widget)
         menu.addAction(customize_action)
-        
         menu.addSeparator()
-        
-        delete_action = QAction("Slett widget", self)
-        delete_action.triggered.connect(self.deleteLater)
+        delete_action = QAction("Delete Widget", self)
+        delete_action.triggered.connect(self.safe_delete)
         menu.addAction(delete_action)
-        
         menu.exec(self.mapToGlobal(position))
-    
+
     def customize_widget(self):
-        """Open customization dialog"""
         from .widget_customization import WidgetCustomizationDialog
-        
         dialog = WidgetCustomizationDialog(self.widget_type, self.config, self)
+        dialog.config_changed.connect(self.apply_config) # Live preview
         if dialog.exec():
             self.config = dialog.get_config()
             self.apply_config()
     
-    def apply_config(self):
-        """Apply configuration to widget appearance"""
-        # Update title
-        display_name = self.config.get('display_name', self.widget_type.title())
-        self.title_label.setText(display_name)
+    def safe_delete(self):
+        parent_dashboard = self.parent()
+        while parent_dashboard:
+            if hasattr(parent_dashboard, 'remove_widget'):
+                parent_dashboard.remove_widget(self)
+                break
+            parent_dashboard = parent_dashboard.parent()
         
-        # Apply colors and styling
-        bg_color = self.config.get('bg_color', '#ffffff')
-        text_color = self.config.get('text_color', '#212529')
-        border_color = self.config.get('border_color', '#dee2e6')
-        font_size = self.config.get('font_size', 16)
-        border_width = self.config.get('border_width', 1)
-        border_radius = self.config.get('border_radius', 4)
-        
-        self.setStyleSheet(f"""
-            ResizableWidget {{
-                background-color: {bg_color};
-                border: {border_width}px solid {border_color};
-                border-radius: {border_radius}px;
-                color: {text_color};
-                font-size: {font_size}px;
-            }}
-        """)
-        
-        # Update title label styling
-        self.title_label.setStyleSheet(f"""
-            QLabel {{
-                background-color: transparent;
-                color: {text_color};
-                font-size: {max(10, font_size - 2)}px;
-                font-weight: bold;
-                padding: 2px 4px;
-                border: none;
-            }}
-        """)
-        
-        # Update close button styling
-        self.close_btn.setStyleSheet(f"""
-            QPushButton {{
-                background-color: transparent;
-                border: none;
-                color: {text_color};
-                font-size: {max(12, font_size)}px;
-                font-weight: bold;
-                padding: 0px;
-                margin: 0px;
-            }}
-            QPushButton:hover {{
-                background-color: rgba(255, 0, 0, 0.1);
-                border-radius: 2px;
-            }}
-        """)
-        
-        # Hide/show elements based on config
-        if not self.config.get('show_title', True):
-            self.title_label.hide()
-        else:
-            self.title_label.show()
+        if self.mqtt_client and hasattr(self, 'on_message_received'):
+            try: self.mqtt_client.message_received.disconnect(self.on_message_received)
+            except (RuntimeError, TypeError): pass
+            except Exception as e: print(f"[WARNING] Error disconnecting MQTT signal: {e}")
             
-        if not self.config.get('show_close', True):
-            self.close_btn.hide()
-        else:
-            self.close_btn.show()
-        
-        # Force update gauge widget if it exists
-        if hasattr(self, 'gauge_widget') and self.gauge_widget:
-            self.gauge_widget.update()
-        
-        # Update slider widget styling if it exists
-        if hasattr(self, 'slider_widget') and self.slider_widget:
-            accent_color = self.config.get('accent_color', '#0d6efd')
-            self.slider_widget.setStyleSheet(f"""
-                QSlider::groove:horizontal {{
-                    border: 1px solid #ced4da;
-                    height: 8px;
-                    background: #e9ecef;
-                    margin: 0px;
-                    border-radius: 4px;
-                }}
-                QSlider::handle:horizontal {{
-                    background: {accent_color};
-                    border: 1px solid {accent_color};
-                    width: 16px;
-                    margin: -4px 0;
-                    border-radius: 8px;
-                }}
-                QSlider::handle:horizontal:hover {{
-                    background: {accent_color};
-                    opacity: 0.8;
-                }}
-            """)
-            
-            # Update min/max values
-            min_val = self.config.get('min_value', 0.0)
-            max_val = self.config.get('max_value', 100.0)
-            current_val = self.slider_widget.value()
-            
-            self.slider_widget.setMinimum(int(min_val))
-            self.slider_widget.setMaximum(int(max_val))
-            
-            # Clamp current value to new range
-            clamped_val = max(int(min_val), min(int(max_val), current_val))
-            self.slider_widget.setValue(clamped_val)
-            
-            # Update value label styling and text
-            if hasattr(self, 'value_label') and self.value_label:
-                text_color = self.config.get('text_color', '#212529')
-                font_size = self.config.get('font_size', 14)
-                self.value_label.setStyleSheet(f"""
-                    QLabel {{
-                        color: {text_color};
-                        font-size: {font_size}px;
-                        font-weight: bold;
-                        padding: 4px;
-                    }}
-                """)
-                formatted_value = self.format_value(clamped_val)
-                self.value_label.setText(formatted_value)
-    
+        self.deleteLater()
+
     def set_presentation_mode(self, enabled):
-        """Toggle presentation mode - hide/show frames and buttons"""
         self.presentation_mode = enabled
         
         if enabled:
-            # Hide frame, title, and close button
-            self.setFrameStyle(QFrame.Shape.NoFrame)
+            self.background_container.setStyleSheet(self.background_container.styleSheet() + "border: none; background-color: transparent;")
             self.title_label.hide()
             self.close_btn.hide()
-            
-            # Make background transparent
-            self.setStyleSheet("""
-                QFrame {
-                    background-color: rgba(255, 255, 255, 0);
-                    border: none;
-                }
-            """)
-            
-            # Disable resize and drag in presentation mode
-            self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, False)
-            
+            self.setWindowFlags(self.windowFlags() | Qt.WindowType.WindowTransparentForInput)
         else:
-            # Restore normal appearance
-            self.apply_config()  # This will restore proper styling
+            self.apply_config()
             self.title_label.show()
             self.close_btn.show()
-            
-            # Re-enable interactions
-            self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, False)
-    
+            self.setWindowFlags(self.windowFlags() & ~Qt.WindowType.WindowTransparentForInput)
+        
+        # Ensure correct flags for resizing/dragging in and out of presentation mode
+        self.setMouseTracking(not enabled) # Disable mouse tracking for cursor changes
+        self.setCursor(Qt.CursorShape.ArrowCursor) # Reset cursor
+
+    def apply_config(self):
+        """Apply configuration styling to the widget."""
+        # Update title
+        display_name = self.config.get('display_name', '')
+        self.title_label.setText(display_name or self.topic)
+
+        # Update header icon
+        self._update_header_icon()
+
+        # Apply background styling
+        bg_color = self.config.get('background_color', '#1e1e1e')
+        border_color = self.config.get('border_color', '#666666')
+        border_width = self.config.get('border_width', 2)
+        border_radius = self.config.get('border_radius', 6)
+        opacity = self.config.get('opacity', 100)
+
+        # Convert opacity (0-100) to alpha (0-255)
+        alpha = int(opacity * 2.55)
+        bg_with_alpha = QColor(bg_color)
+        bg_with_alpha.setAlpha(alpha)
+
+        self.background_container.setStyleSheet(f"""
+            #widget_background {{
+                background-color: {bg_with_alpha.name(QColor.NameFormat.HexArgb)};
+                border: {border_width}px solid {border_color};
+                border-radius: {border_radius}px;
+            }}
+        """)
+
+    def _update_header_icon(self):
+        """Update the header icon based on config."""
+        icon_data = self.config.get('icon_data', '')
+        is_text = self.config.get('icon_is_text', False)
+        icon_size = self.config.get('icon_size', 24)
+
+        if not icon_data:
+            self.icon_label.hide()
+            return
+
+        if is_text:
+            # Text icon (emoji or unicode character)
+            self.icon_label.setText(icon_data)
+            self.icon_label.setStyleSheet(f"font-size: {icon_size}px;")
+            self.icon_label.setFixedSize(icon_size + 4, icon_size + 4)
+        else:
+            # File path icon
+            icon_path = Path(icon_data)
+            if icon_path.exists():
+                pixmap = QPixmap(str(icon_path))
+                if not pixmap.isNull():
+                    scaled_pixmap = pixmap.scaled(icon_size, icon_size, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
+                    self.icon_label.setPixmap(scaled_pixmap)
+                    self.icon_label.setFixedSize(icon_size, icon_size)
+                else:
+                    self.icon_label.hide()
+                    return
+            else:
+                self.icon_label.hide()
+                return
+
+        self.icon_label.show()
+
     def format_value(self, value):
-        """Format value according to configuration"""
+        if self.error_state: self.clear_error()
         try:
-            # Apply conversion
-            factor = self.config.get('conversion_factor', 1.0)
-            offset = self.config.get('conversion_offset', 0.0)
+            factor, offset = float(self.config.get('conversion_factor', 1.0)), float(self.config.get('conversion_offset', 0.0))
             converted_value = float(value) * factor + offset
-            
-            # Format with decimal places
-            decimal_places = self.config.get('decimal_places', 1)
+            decimal_places = int(self.config.get('decimal_places', 1))
             formatted = f"{converted_value:.{decimal_places}f}"
-            
-            # Add unit if specified
             unit = self.config.get('unit', '')
-            if unit:
-                formatted += f" {unit}"
-            
+            if unit: formatted += f" {unit}"
             return formatted
         except (ValueError, TypeError):
+            unit = self.config.get('unit', '')
+            if unit: return f"{value} {unit}"
             return str(value)
     
     def get_warning_color(self, value):
-        """Get warning color based on value and thresholds"""
-        if not self.config.get('warning_enabled', False):
-            return None
-        
+        if not self.config.get('warning_enabled', False): return None
         try:
-            val = float(value)
-            warning_low = self.config.get('warning_low', 20.0)
-            warning_high = self.config.get('warning_high', 80.0)
-            
-            if val <= warning_low or val >= warning_high:
-                return self.config.get('critical_color', '#dc3545')
-            elif val <= warning_low * 1.2 or val >= warning_high * 0.8:
-                return self.config.get('warning_color', '#ffc107')
-        except (ValueError, TypeError):
-            pass
-        
+            val, low, high = float(value), self.config.get('warning_low', 20.0), self.config.get('warning_high', 80.0)
+            if val <= low or val >= high: return self.config.get('critical_color', '#dc3545')
+            elif val <= low * 1.2 or val >= high * 0.8: return self.config.get('warning_color', '#ffc107')
+        except (ValueError, TypeError): pass
         return None
     
-    def get_value(self):
-        """Return the current value of the widget"""
-        return ""
+    def show_error(self, message):
+        self.error_state, self.error_message = True, message
+        self.setToolTip(f"Error: {message}")
+        for i in range(self.content_layout.count()):
+            widget = self.content_layout.itemAt(i).widget()
+            if widget: widget.hide()
+        self.error_label.show()
+        border_width, border_radius, error_border_color = self.config.get('border_width', 2), self.config.get('border_radius', 6), "#dc3545"
+        self.background_container.setStyleSheet(self.background_container.styleSheet() + f"border: {border_width}px solid {error_border_color};")
+
+    def clear_error(self):
+        if not self.error_state: return
+        self.error_state, self.error_message = False, ""
+        self.setToolTip("")
+        self.error_label.hide()
+        for i in range(self.content_layout.count()):
+            widget = self.content_layout.itemAt(i).widget()
+            if widget: widget.show()
+        self.apply_config()
+
+    def get_value(self): return ""

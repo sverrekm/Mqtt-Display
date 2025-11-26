@@ -1,71 +1,87 @@
-from PyQt6.QtWidgets import QSlider, QLabel
+from PyQt6.QtWidgets import QSlider, QLabel, QVBoxLayout, QWidget
 from PyQt6.QtCore import Qt
-from .base_widget import BaseWidget
+from .resizable_widget import ResizableWidget
 
-class SliderWidget(BaseWidget):
-    def __init__(self, topic, min_val=0, max_val=100, initial_val=0, parent=None):
-        super().__init__("slider", topic, parent)
-        from PyQt6.QtWidgets import QSlider
+class SliderWidget(ResizableWidget):
+    def __init__(self, topic, mqtt_client=None, parent=None, config=None):
+        super().__init__("slider", topic, mqtt_client, parent, config)
+        self.init_content()
+        self.connect_signals()
+        self.apply_config()
         
-        # Create slider
-        self.slider = QSlider(Qt.Orientation.Horizontal)
-        self.slider.setMinimum(min_val)
-        self.slider.setMaximum(max_val)
-        self.slider.setValue(initial_val)
-        
-        # Create value display
-        self.value_label = QLabel(str(initial_val))
+    def init_content(self):
+        """Initialize the content of the slider widget."""
+        self.slider = QSlider()
+        self.value_label = QLabel("0")
         self.value_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         
-        # Style the slider and label
-        self.slider.setStyleSheet("""
-            QSlider::groove:horizontal {
-                border: 1px solid #ced4da;
-                height: 8px;
-                background: #e9ecef;
-                margin: 0px;
-                border-radius: 4px;
-            }
-            QSlider::handle:horizontal {
-                background: #0d6efd;
-                border: 1px solid #0a58ca;
-                width: 16px;
-                margin: -4px 0;
-                border-radius: 8px;
-            }
-            QSlider::handle:horizontal:hover {
-                background: #0b5ed7;
-            }
-        """)
-        
-        self.value_label.setStyleSheet("""
-            QLabel {
-                font-weight: 500;
-                color: #212529;
-                font-size: 12px;
-            }
-        """)
-        
-        # Connect signals
-        self.slider.valueChanged.connect(self.on_value_changed)
-        
-        # Add to layout with proper spacing
-        self.content_layout.addStretch(1)
-        self.content_layout.addWidget(self.value_label, 0, Qt.AlignmentFlag.AlignCenter)
+        # Add to layout
+        self.content_layout.addWidget(self.value_label)
         self.content_layout.addWidget(self.slider)
-        self.content_layout.addStretch(1)
-    
-    def on_value_changed(self, value):
-        """Handle slider value changes"""
+
+    def connect_signals(self):
+        if self.mqtt_client:
+            print(f"[DEBUG] SliderWidget subscribing to topic: {self.topic}")
+            self.mqtt_client.subscribe(self.topic)
+            self.mqtt_client.message_received.connect(self.on_message_received)
+        self.slider.valueChanged.connect(self.on_slider_changed)
+
+    def on_slider_changed(self, value):
         self.value_label.setText(str(value))
-    
+        if self.mqtt_client and self.mqtt_client.connected:
+            self.mqtt_client.publish(self.topic, str(value))
+
+    def on_message_received(self, topic, message):
+        if topic == self.topic:
+            try:
+                print(f"[DEBUG] SliderWidget received: topic={topic}, message={message}")
+                self.slider.blockSignals(True)
+                value = int(float(message))
+                min_val, max_val = self.slider.minimum(), self.slider.maximum()
+                clamped_value = max(min_val, min(max_val, value))
+                self.slider.setValue(clamped_value)
+                self.value_label.setText(str(clamped_value))
+                if self.error_state: self.clear_error()
+            except (ValueError, TypeError):
+                self.show_error(f"Invalid payload: '{message}'")
+            except RuntimeError:
+                pass # Widget might be deleted
+            finally:
+                if self.slider and self.slider.signalsBlocked():
+                    self.slider.blockSignals(False)
+
+    def apply_config(self):
+        """Apply configuration to the widget."""
+        super().apply_config()
+        
+        min_v = int(self.config.get('min_value', 0))
+        max_v = int(self.config.get('max_value', 100))
+        
+        self.slider.blockSignals(True)
+        self.slider.setMinimum(min_v)
+        self.slider.setMaximum(max_v)
+        self.slider.blockSignals(False)
+        
+        orientation = Qt.Orientation.Vertical if self.config.get('slider_orientation') == 'vertical' else Qt.Orientation.Horizontal
+        self.slider.setOrientation(orientation)
+        
+        accent_color = self.config.get('accent_color', '#0d6efd')
+        stylesheet = ""
+        if orientation == Qt.Orientation.Horizontal:
+            stylesheet = f"""
+                QSlider::groove:horizontal {{ border: 1px solid #ced4da; height: 8px; background: #e9ecef; margin: 0px; border-radius: 4px; }}
+                QSlider::handle:horizontal {{ background: {accent_color}; border: 1px solid {accent_color}; width: 16px; margin: -4px 0; border-radius: 8px; }}
+            """
+        else:
+            stylesheet = f"""
+                QSlider::groove:vertical {{ border: 1px solid #ced4da; width: 8px; background: #e9ecef; margin: 0px; border-radius: 4px; }}
+                QSlider::handle:vertical {{ background: {accent_color}; border: 1px solid {accent_color}; height: 16px; margin: 0 -4px; border-radius: 8px; }}
+            """
+        self.slider.setStyleSheet(stylesheet)
+        
+        text_color = self.config.get('text_color', '#D9D9D9')
+        font_size = int(self.config.get('font_size', 12))
+        self.value_label.setStyleSheet(f"color: {text_color}; font-size: {font_size}px;")
+
     def get_value(self):
-        """Return the current slider value"""
-        return self.slider.value()
-    
-    def set_value(self, value):
-        """Set the slider value"""
-        try:
-            self.slider.setValue(int(float(value)))
-        except (ValueError, TypeError):
-            pass
+        return str(self.slider.value())

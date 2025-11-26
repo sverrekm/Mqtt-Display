@@ -1,150 +1,139 @@
-from PyQt6.QtWidgets import QLabel
-from PyQt6.QtCore import Qt, QRectF, QPointF
-from PyQt6.QtGui import QPainter, QPen, QBrush, QColor, QConicalGradient
-import math
-from .base_widget import BaseWidget
+from PyQt6.QtWidgets import QWidget, QLabel, QVBoxLayout
+from PyQt6.QtGui import QPainter, QColor, QPen, QBrush
+from PyQt6.QtCore import Qt, QRect
+from .resizable_widget import ResizableWidget
 
-class GaugeWidget(BaseWidget):
-    def __init__(self, topic, min_val=0, max_val=100, initial_val=0, mqtt_client=None, parent=None):
-        super().__init__("gauge", topic, mqtt_client, parent)
-        self.min_val = float(min_val)
-        self.max_val = float(max_val)
-        self.value = float(initial_val)
-        
-        # Set minimum size
-        self.setMinimumSize(120, 80)
-        
-        # Create value label
-        self.value_label = QLabel(f"{initial_val:.1f}")
+class GaugeWidget(ResizableWidget):
+    def __init__(self, topic, mqtt_client=None, parent=None, config=None):
+        super().__init__(config.get('type', 'gauge'), topic, mqtt_client, parent, config)
+        self.value = 0.0
+        self.init_content()
+        self.connect_signals()
+        self.apply_config()
+
+    def init_content(self):
+        """Initialize the content of the gauge widget."""
+        # Main container for the gauge and its labels
+        container = QWidget()
+        self.layout = QVBoxLayout(container)
+        self.layout.setContentsMargins(5, 5, 5, 5)
+
+        # Create widgets
+        self.title_label_internal = QLabel()
+        self.title_label_internal.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.gauge_painter = GaugePainter(self)
+        self.value_label = QLabel("0.0")
         self.value_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.value_label.setStyleSheet("""
-            QLabel {
-                font-weight: bold;
-                font-size: 16px;
-                color: #212529;
-            }
-        """)
-        
+
         # Add to layout
-        self.content_layout.addStretch(1)
-        self.content_layout.addWidget(self.value_label, 0, Qt.AlignmentFlag.AlignCenter)
-        self.content_layout.addStretch(1)
-        
-        # Connect to MQTT if available
-        if mqtt_client:
-            mqtt_client.message_received.connect(self.on_message_received)
-    
-    def paintEvent(self, event):
-        """Draw the gauge"""
-        painter = QPainter(self)
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing) 
-        
-        # Calculate dimensions
-        width = self.width()
-        height = self.height()
-        size = min(width, height * 1.5)
-        x = (width - size) // 2
-        y = 0
-        
-        # Initialize ratio with default value (0.0)
-        ratio = 0.0
-        
-        # Draw the gauge background
-        pen = QPen(QColor(200, 200, 200), 2)
-        painter.setPen(pen)
-        painter.setBrush(Qt.BrushStyle.NoBrush)
-        
-        # Draw the gauge arc (semi-circle)
-        rect = QRectF(x, y, size, size * 2)
-        start_angle = 180 * 16  # 180 degrees in 1/16th of a degree
-        span_angle = 180 * 16   # 180 degrees in 1/16th of a degree
-        painter.drawArc(rect, start_angle, span_angle)
-        
-        # Calculate the angle for the value
-        value_range = self.max_val - self.min_val
-        if value_range > 0:
-            ratio = (self.value - self.min_val) / value_range
-            ratio = max(0, min(1, ratio))  # Clamp between 0 and 1
-            angle = 180 * ratio  # 0-180 degrees
-            
-            # Draw the value arc with a gradient
-            gradient = QConicalGradient(rect.center(), 180)  # 180 degrees is at the top
-            gradient.setColorAt(0, QColor(255, 0, 0))      # Red at min
-            gradient.setColorAt(0.5, QColor(255, 255, 0))  # Yellow at middle
-            gradient.setColorAt(1, QColor(0, 255, 0))      # Green at max
-            
-            pen = QPen(gradient, 6)
-            pen.setCapStyle(Qt.PenCapStyle.RoundCap)
-            painter.setPen(pen)
-            
-            # Draw the value arc
-            painter.drawArc(rect, start_angle, int(span_angle * ratio))
-        
-        # Draw the needle
-        if value_range > 0:
-            radius = size // 2 - 10
-            center = QPointF(x + size // 2, size)
-            angle_rad = math.radians(180 - (180 * ratio))
-            end_x = center.x() + radius * math.cos(angle_rad)
-            end_y = center.y() - radius * math.sin(angle_rad)
-            
-            pen = QPen(QColor(50, 50, 50), 2)
-            painter.setPen(pen)
-            painter.drawLine(center, QPointF(end_x, end_y))
-            
-            # Draw center circle
-            painter.setBrush(QBrush(QColor(50, 50, 50)))
-            painter.drawEllipse(center, 5, 5)
-    
+        self.layout.addWidget(self.title_label_internal)
+        self.layout.addWidget(self.gauge_painter, 1) # Painter takes stretch
+        self.layout.addWidget(self.value_label)
+
+        self.content_layout.addWidget(container)
+
+    def connect_signals(self):
+        if self.mqtt_client:
+            print(f"[DEBUG] GaugeWidget subscribing to topic: {self.topic}")
+            self.mqtt_client.subscribe(self.topic)
+            self.mqtt_client.message_received.connect(self.on_message_received)
+
     def on_message_received(self, topic, message):
-        try:
-            print(f"[GAUGE DEBUG] Received message - Topic: {topic}, Message: {message}")
-            print(f"[GAUGE DEBUG] Widget topic: {self.topic}")
-            
-            # Check if this message is for this widget's topic
-            if topic == self.topic:
-                print("[GAUGE DEBUG] Topic matches widget's subscription")
-                try:
-                    value = float(message)
-                    print(f"[GAUGE DEBUG] Converted message to float: {value}")
-                    print(f"[GAUGE DEBUG] Current value: {self.value}, New value: {value}")
-                    self.set_value(value)
-                    print("[GAUGE DEBUG] Value set successfully")
-                except ValueError as e:
-                    print(f"[GAUGE ERROR] Could not convert message to float: {message}. Error: {str(e)}")
-            else:
-                print(f"[GAUGE DEBUG] Ignoring message - topic doesn't match widget's topic")
-                
-        except Exception as e:
-            print(f"[GAUGE ERROR] Unexpected error in on_message_received: {str(e)}")
-            import traceback
-            traceback.print_exc()
-    
-    def set_value(self, value):
-        """Set the gauge value and update the display"""
-        try:
-            # Ensure value is within min/max bounds
-            self.value = max(self.min_val, min(self.max_val, float(value)))
-            print(f"[DEBUG] GaugeWidget value set to: {self.value}")
-            
-            # Update the label text
-            self.value_label.setText(f"{self.value:.1f}")
-            
-            # Force a repaint of the widget
-            self.update()
-            
-            # Ensure the widget is visible and properly updated
-            if not self.isVisible():
-                print("[WARNING] GaugeWidget is not visible!")
-                self.show()
-                
-        except Exception as e:
-            print(f"[ERROR] Error in set_value: {str(e)}")
-    
+        if topic == self.topic:
+            try:
+                print(f"[DEBUG] GaugeWidget received: topic={topic}, message={message}")
+                self.value = float(message)
+                self.value_label.setText(self.format_value(self.value))
+                if self.error_state: self.clear_error()
+                self.gauge_painter.update()
+            except (ValueError, TypeError):
+                self.show_error(f"Invalid payload: '{message}'")
+            except RuntimeError:
+                pass # Widget might be deleted
+
+    def apply_config(self):
+        super().apply_config()
+        self.title_label.hide() # Hide ResizableWidget's title
+        
+        self.title_label_internal.setText(self.config.get('display_name', self.topic))
+        self.value_label.setText(self.format_value(self.value))
+
+        text_color = self.config.get('text_color', '#D9D9D9')
+        font_size = int(self.config.get('font_size', 12))
+        self.title_label_internal.setStyleSheet(f"color: {text_color}; font-size: {max(10, font_size - 2)}px; font-weight: bold;")
+        self.value_label.setStyleSheet(f"color: {text_color}; font-size: {font_size}px;")
+
+        self.gauge_painter.update()
+
     def get_value(self):
-        """Return the current gauge value"""
-        return self.value
-    
-    def resizeEvent(self, event):
-        """Handle widget resize events"""
-        self.update()  # Redraw the gauge when resized
+        return str(self.value)
+
+class GaugePainter(QWidget):
+    def __init__(self, parent_widget: GaugeWidget):
+        super().__init__(parent_widget)
+        self.parent_widget = parent_widget
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        try:
+            painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+            config = self.parent_widget.config
+            value = self.parent_widget.value
+            
+            gauge_type = config.get('type', 'gauge')
+            min_val = float(config.get('min_value', 0.0))
+            max_val = float(config.get('max_value', 100.0))
+            accent_color = config.get('accent_color', '#0d6efd')
+            warning_color = self.parent_widget.get_warning_color(value)
+            
+            rect = self.rect()
+            center = rect.center()
+
+            if gauge_type == 'gauge_circular':
+                self.draw_circular_gauge(painter, rect, center, value, min_val, max_val, accent_color, warning_color)
+            elif gauge_type == 'gauge_linear':
+                self.draw_linear_gauge(painter, rect, center, value, min_val, max_val, accent_color, warning_color)
+            else:
+                self.draw_arc_gauge(painter, rect, center, value, min_val, max_val, accent_color, warning_color)
+        except Exception as e:
+            print(f"[ERROR] Gauge paint event failed: {e}")
+        finally:
+            painter.end()
+
+    def draw_arc_gauge(self, painter, rect, center, value, min_val, max_val, accent_color, warning_color):
+        radius = min(rect.width(), rect.height()) / 2 - 5
+        start_angle, span_angle = 210 * 16, 120 * 16
+        painter.setPen(QPen(QColor(200, 200, 200, 50), 12))
+        # Convert all float values to int for drawArc
+        painter.drawArc(int(center.x() - radius), int(center.y() - radius), int(radius * 2), int(radius * 2), start_angle, span_angle)
+        if max_val > min_val:
+            normalized_value = max(0, min(1, (value - min_val) / (max_val - min_val)))
+            value_angle = int(normalized_value * 120 * 16)
+            arc_color = QColor(warning_color) if warning_color else QColor(accent_color)
+            painter.setPen(QPen(arc_color, 12))
+            painter.drawArc(int(center.x() - radius), int(center.y() - radius), int(radius * 2), int(radius * 2), start_angle, value_angle)
+
+    def draw_circular_gauge(self, painter, rect, center, value, min_val, max_val, accent_color, warning_color):
+        radius = min(rect.width(), rect.height()) / 2 - 10
+        painter.setPen(QPen(QColor(200, 200, 200, 50), 8))
+        painter.drawEllipse(int(center.x() - radius), int(center.y() - radius), int(radius * 2), int(radius * 2))
+        if max_val > min_val:
+            normalized_value = max(0, min(1, (value - min_val) / (max_val - min_val)))
+            value_angle = int(normalized_value * 360 * 16)
+            arc_color = QColor(warning_color) if warning_color else QColor(accent_color)
+            painter.setPen(QPen(arc_color, 8))
+            painter.drawArc(int(center.x() - radius), int(center.y() - radius), int(radius * 2), int(radius * 2), 90 * 16, -value_angle)
+
+    def draw_linear_gauge(self, painter, rect, center, value, min_val, max_val, accent_color, warning_color):
+        bar_height, bar_width, bar_x = max(15, min(rect.height() - 10, 30)), rect.width() - 20, 10
+        bar_y = center.y() - bar_height / 2
+        painter.setBrush(QBrush(QColor(200, 200, 200, 50)))
+        painter.setPen(Qt.PenStyle.NoPen)
+        # Convert float values to int for drawRoundedRect
+        painter.drawRoundedRect(int(bar_x), int(bar_y), int(bar_width), int(bar_height), bar_height/2, bar_height/2)
+        if max_val > min_val:
+            normalized_value = max(0, min(1, (value - min_val) / (max_val - min_val)))
+            value_width = int(normalized_value * bar_width)
+            bar_color = QColor(warning_color) if warning_color else QColor(accent_color)
+            painter.setBrush(QBrush(bar_color))
+            painter.drawRoundedRect(int(bar_x), int(bar_y), int(value_width), int(bar_height), bar_height/2, bar_height/2)

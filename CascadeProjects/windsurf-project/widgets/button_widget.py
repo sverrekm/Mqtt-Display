@@ -59,121 +59,74 @@ class ButtonWidget(ResizableWidget):
         """Apply configuration to the widget."""
         super().apply_config()
 
-        # Update button icon
-        self._update_button_icon()
+        # Update button text, icon, and styling
+        self._update_button_icon_and_text()
 
-        # Basic styling
+    def _update_button_icon_and_text(self):
+        """Update button icon, text, and styling based on config"""
+        # Get style properties from config, with reasonable fallbacks
         accent_color = self.config.get('accent_color', '#0d6efd')
         button_bg_color = self.config.get('button_bg_color', '#343a40')
-        text_color = self.config.get('text_color', '#D9D9D9')
+        button_text_color = self.config.get('button_text_color', self.config.get('text_color', '#D9D9D9'))
+        border_color = self.config.get('border_color', '#6c757d')
         font_size = self.config.get('font_size', 12)
 
+        # Get content properties from config
+        icon_data = self.config.get('icon_data', '')
+        is_text_icon = self.config.get('icon_is_text', False)
+        icon_size = self.config.get('icon_size', 24)
+        icon_position = self.config.get('icon_position', 'left')
+        # Use 'or self.topic' to fall back if display_name is an empty string
+        display_name = self.config.get('display_name') or self.topic
+        show_text = self.config.get('show_text', True)
+
+        # Clear existing icon and text
+        self.button.setIcon(QIcon())
+        self.button.setText("")
+
+        current_text = ""
+        current_font_size = font_size
+
+        if icon_data:
+            if is_text_icon:
+                if icon_position == 'only' or not show_text:
+                    current_text = icon_data
+                    current_font_size = icon_size  # Use icon size for emoji-only button
+                elif icon_position == 'left':
+                    current_text = f"{icon_data} {display_name}"
+                else:  # right
+                    current_text = f"{display_name} {icon_data}"
+            else:  # Image icon
+                if Path(icon_data).exists():
+                    pixmap = QPixmap(icon_data)
+                    if not pixmap.isNull():
+                        self.button.setIcon(QIcon(pixmap))
+                        self.button.setIconSize(pixmap.scaled(icon_size, icon_size, Qt.AspectRatioMode.KeepAspectRatio).size())
+                if show_text and icon_position != 'only':
+                    current_text = display_name
+        elif show_text:
+            current_text = display_name
+        
+        self.button.setText(current_text)
+        
+        # Apply stylesheet
         self.button.setStyleSheet(f"""
             QPushButton {{
                 background-color: {button_bg_color};
-                color: {text_color};
-                border: 1px solid #6c757d;
+                color: {button_text_color};
+                border: 1px solid {border_color};
                 padding: 8px;
                 border-radius: 4px;
-                font-size: {font_size}px;
+                font-size: {current_font_size}px;
             }}
-            QPushButton:checked {{ background-color: {accent_color}; }}
-            QPushButton:hover {{ border-color: {accent_color}; }}
+            QPushButton:checked {{
+                background-color: {accent_color};
+                border: 1px solid {accent_color};
+            }}
+            QPushButton:hover {{
+                border-color: {accent_color};
+            }}
         """)
-
-    def _update_button_icon(self):
-        """Update button icon and text based on config"""
-        icon_data = self.config.get('icon_data', '')
-        is_text = self.config.get('icon_is_text', False)
-        icon_size = self.config.get('icon_size', 24)
-        icon_position = self.config.get('icon_position', 'left')
-        display_name = self.config.get('display_name', self.topic)
-        show_text = self.config.get('show_text', True)
-
-        # Clear existing icon
-        self.button.setIcon(QIcon())
-
-        # If show_text is False, only show icon
-        if not show_text:
-            self.button.setText("")
-            if icon_data:
-                if is_text:
-                    # Text icon (emoji)
-                    self.button.setText(icon_data)
-                    text_color = self.config.get('text_color', '#D9D9D9')
-                    button_bg_color = self.config.get('button_bg_color', '#343a40')
-                    accent_color = self.config.get('accent_color', '#0d6efd')
-                    self.button.setStyleSheet(f"""
-                        QPushButton {{
-                            background-color: {button_bg_color};
-                            color: {text_color};
-                            border: 1px solid #6c757d;
-                            padding: 8px;
-                            border-radius: 4px;
-                            font-size: {icon_size}px;
-                        }}
-                        QPushButton:checked {{ background-color: {accent_color}; }}
-                        QPushButton:hover {{ border-color: {accent_color}; }}
-                    """)
-                else:
-                    # Image icon
-                    if Path(icon_data).exists():
-                        pixmap = QPixmap(icon_data)
-                        if not pixmap.isNull():
-                            self.button.setIcon(QIcon(pixmap))
-                            self.button.setIconSize(pixmap.scaled(icon_size, icon_size, Qt.AspectRatioMode.KeepAspectRatio).size())
-            return
-
-        # Normal flow with text visible
-        if not icon_data:
-            # No icon, just text
-            self.button.setText(display_name)
-            return
-
-        if icon_position == 'only':
-            # Icon only, no text
-            self.button.setText("")
-            if is_text:
-                # For text icons, we need to use text with large font
-                self.button.setText(icon_data)
-                text_color = self.config.get('text_color', '#D9D9D9')
-                button_bg_color = self.config.get('button_bg_color', '#343a40')
-                accent_color = self.config.get('accent_color', '#0d6efd')
-                self.button.setStyleSheet(f"""
-                    QPushButton {{
-                        background-color: {button_bg_color};
-                        color: {text_color};
-                        border: 1px solid #6c757d;
-                        padding: 8px;
-                        border-radius: 4px;
-                        font-size: {icon_size}px;
-                    }}
-                    QPushButton:checked {{ background-color: {accent_color}; }}
-                    QPushButton:hover {{ border-color: {accent_color}; }}
-                """)
-            else:
-                # Image icon
-                if Path(icon_data).exists():
-                    pixmap = QPixmap(icon_data)
-                    if not pixmap.isNull():
-                        self.button.setIcon(QIcon(pixmap))
-                        self.button.setIconSize(pixmap.scaled(icon_size, icon_size, Qt.AspectRatioMode.KeepAspectRatio).size())
-        else:
-            # Icon with text (left or right)
-            if is_text:
-                # For text icons with text, combine them
-                if icon_position == 'left':
-                    self.button.setText(f"{icon_data} {display_name}")
-                else:  # right
-                    self.button.setText(f"{display_name} {icon_data}")
-            else:
-                # Image icon with text
-                self.button.setText(display_name)
-                if Path(icon_data).exists():
-                    pixmap = QPixmap(icon_data)
-                    if not pixmap.isNull():
-                        self.button.setIcon(QIcon(pixmap))
-                        self.button.setIconSize(pixmap.scaled(icon_size, icon_size, Qt.AspectRatioMode.KeepAspectRatio).size())
 
     def get_value(self):
         return str(self.button.isChecked())

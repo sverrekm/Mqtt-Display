@@ -86,10 +86,12 @@ class WidgetCustomizationDialog(QDialog):
             self.accent_color_btn = QPushButton()
             layout.addRow("Accent Color:", self.accent_color_btn)
             self.accent_color_btn.clicked.connect(lambda: self._choose_color('accent_color'))
+        
         if self.widget_type == 'button':
             self.button_bg_color_btn = QPushButton()
             layout.addRow("Button Background Color:", self.button_bg_color_btn)
             self.button_bg_color_btn.clicked.connect(lambda: self._choose_color('button_bg_color'))
+
         if self.widget_type == 'toggle':
             self.toggle_off_color_btn = QPushButton()
             self.toggle_handle_color_btn = QPushButton()
@@ -167,14 +169,24 @@ class WidgetCustomizationDialog(QDialog):
         self.unit = QLineEdit()
         layout.addRow("Unit:", self.unit)
         self.unit.textChanged.connect(self._emit_config_changed)
-        # Add other data-related fields here...
+        
+        if self.widget_type in ['gauge', 'gauge_circular', 'gauge_linear', 'gauge_speedometer', 'gauge_voltage']:
+            self.min_value_spin = QDoubleSpinBox()
+            self.max_value_spin = QDoubleSpinBox()
+            self.min_value_spin.setRange(-1000000, 1000000)
+            self.max_value_spin.setRange(-1000000, 1000000)
+            layout.addRow("Minimum Value:", self.min_value_spin)
+            layout.addRow("Maximum Value:", self.max_value_spin)
+            self.min_value_spin.valueChanged.connect(self._emit_config_changed)
+            self.max_value_spin.valueChanged.connect(self._emit_config_changed)
 
     def _choose_color(self, color_attr):
         current_color = QColor(self.config.get(color_attr, "#ffffff"))
         color = QColorDialog.getColor(current_color, self, f"Select {color_attr.replace('_', ' ').title()}")
         if color.isValid():
-            button = getattr(self, f"{color_attr}_btn")
-            button.setStyleSheet(f"background-color: {color.name()};")
+            button = getattr(self, f"{color_attr}_btn", None)
+            if button:
+                button.setStyleSheet(f"background-color: {color.name()};")
             self.config[color_attr] = color.name()
             self._emit_config_changed()
 
@@ -253,11 +265,14 @@ class WidgetCustomizationDialog(QDialog):
         load_color('border_color', '#2F3338')
         if hasattr(self, 'accent_color_btn'): load_color('accent_color', '#0d6efd')
         if hasattr(self, 'button_bg_color_btn'): load_color('button_bg_color', '#343a40')
+        if hasattr(self, 'button_text_color_btn'): load_color('button_text_color', '#D9D9D9')
         if hasattr(self, 'toggle_off_color_btn'): load_color('toggle_off_color', '#6c757d')
         if hasattr(self, 'toggle_handle_color_btn'): load_color('toggle_handle_color', '#ffffff')
 
         self.font_size_spin.setValue(self.config.get('font_size', 12))
         if hasattr(self, 'unit'): self.unit.setText(self.config.get('unit', ''))
+        if hasattr(self, 'min_value_spin'): self.min_value_spin.setValue(self.config.get('min_value', 0))
+        if hasattr(self, 'max_value_spin'): self.max_value_spin.setValue(self.config.get('max_value', 100))
 
         # Load icon settings
         if hasattr(self, 'icon_size_spin'):
@@ -282,6 +297,8 @@ class WidgetCustomizationDialog(QDialog):
         self.config['theme_selector'] = self.theme_selector.currentData()
         self.config['font_size'] = self.font_size_spin.value()
         if hasattr(self, 'unit'): self.config['unit'] = self.unit.text()
+        if hasattr(self, 'min_value_spin'): self.config['min_value'] = self.min_value_spin.value()
+        if hasattr(self, 'max_value_spin'): self.config['max_value'] = self.max_value_spin.value()
 
         # Save icon settings
         if hasattr(self, 'icon_size_spin'):

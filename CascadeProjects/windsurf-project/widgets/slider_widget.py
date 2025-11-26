@@ -53,18 +53,18 @@ class SliderWidget(ResizableWidget):
     def apply_config(self):
         """Apply configuration to the widget."""
         super().apply_config()
-        
+
         min_v = int(self.config.get('min_value', 0))
         max_v = int(self.config.get('max_value', 100))
-        
+
         self.slider.blockSignals(True)
         self.slider.setMinimum(min_v)
         self.slider.setMaximum(max_v)
         self.slider.blockSignals(False)
-        
+
         orientation = Qt.Orientation.Vertical if self.config.get('slider_orientation') == 'vertical' else Qt.Orientation.Horizontal
         self.slider.setOrientation(orientation)
-        
+
         accent_color = self.config.get('accent_color', '#0d6efd')
         stylesheet = ""
         if orientation == Qt.Orientation.Horizontal:
@@ -78,10 +78,17 @@ class SliderWidget(ResizableWidget):
                 QSlider::handle:vertical {{ background: {accent_color}; border: 1px solid {accent_color}; height: 16px; margin: 0 -4px; border-radius: 8px; }}
             """
         self.slider.setStyleSheet(stylesheet)
-        
+
         text_color = self.config.get('text_color', '#D9D9D9')
         font_size = int(self.config.get('font_size', 12))
         self.value_label.setStyleSheet(f"color: {text_color}; font-size: {font_size}px;")
+
+        # Show/hide value label based on config
+        show_text = self.config.get('show_text', True)
+        if show_text:
+            self.value_label.show()
+        else:
+            self.value_label.hide()
 
     def get_value(self):
         return str(self.slider.value())

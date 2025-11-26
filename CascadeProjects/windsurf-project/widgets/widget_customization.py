@@ -54,8 +54,12 @@ class WidgetCustomizationDialog(QDialog):
         layout.addRow("Display Name:", self.display_name_edit)
         self.show_title = QCheckBox("Show Title")
         layout.addRow(self.show_title)
+        self.show_text = QCheckBox("Show Text/Value")
+        self.show_text.setChecked(True)
+        layout.addRow(self.show_text)
         self.display_name_edit.textChanged.connect(self._emit_config_changed)
         self.show_title.stateChanged.connect(self._emit_config_changed)
+        self.show_text.stateChanged.connect(self._emit_config_changed)
         
     def init_appearance_tab(self):
         layout = QFormLayout(self.appearance_tab)
@@ -229,6 +233,7 @@ class WidgetCustomizationDialog(QDialog):
     def load_config(self):
         self.display_name_edit.setText(self.config.get('display_name', ''))
         self.show_title.setChecked(self.config.get('show_title', True))
+        self.show_text.setChecked(self.config.get('show_text', True))
 
         theme = self.config.get('theme_selector', 'use_global')
         index = self.theme_selector.findData(theme)
@@ -268,6 +273,7 @@ class WidgetCustomizationDialog(QDialog):
     def get_config(self):
         self.config['display_name'] = self.display_name_edit.text()
         self.config['show_title'] = self.show_title.isChecked()
+        self.config['show_text'] = self.show_text.isChecked()
         self.config['theme_selector'] = self.theme_selector.currentData()
         self.config['font_size'] = self.font_size_spin.value()
         if hasattr(self, 'unit'): self.config['unit'] = self.unit.text()

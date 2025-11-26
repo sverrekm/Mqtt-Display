@@ -54,7 +54,7 @@ class GaugeWidget(ResizableWidget):
     def apply_config(self):
         super().apply_config()
         self.title_label.hide() # Hide ResizableWidget's title
-        
+
         self.title_label_internal.setText(self.config.get('display_name', self.topic))
         self.value_label.setText(self.format_value(self.value))
 
@@ -62,6 +62,13 @@ class GaugeWidget(ResizableWidget):
         font_size = int(self.config.get('font_size', 12))
         self.title_label_internal.setStyleSheet(f"color: {text_color}; font-size: {max(10, font_size - 2)}px; font-weight: bold;")
         self.value_label.setStyleSheet(f"color: {text_color}; font-size: {font_size}px;")
+
+        # Show/hide value label based on config
+        show_text = self.config.get('show_text', True)
+        if show_text:
+            self.value_label.show()
+        else:
+            self.value_label.hide()
 
         self.gauge_painter.update()
 

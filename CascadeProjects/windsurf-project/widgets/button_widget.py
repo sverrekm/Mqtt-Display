@@ -87,10 +87,41 @@ class ButtonWidget(ResizableWidget):
         icon_size = self.config.get('icon_size', 24)
         icon_position = self.config.get('icon_position', 'left')
         display_name = self.config.get('display_name', self.topic)
+        show_text = self.config.get('show_text', True)
 
         # Clear existing icon
         self.button.setIcon(QIcon())
 
+        # If show_text is False, only show icon
+        if not show_text:
+            self.button.setText("")
+            if icon_data:
+                if is_text:
+                    # Text icon (emoji)
+                    self.button.setText(icon_data)
+                    text_color = self.config.get('text_color', '#D9D9D9')
+                    self.button.setStyleSheet(f"""
+                        QPushButton {{
+                            background-color: #343a40;
+                            color: {text_color};
+                            border: 1px solid #6c757d;
+                            padding: 8px;
+                            border-radius: 4px;
+                            font-size: {icon_size}px;
+                        }}
+                        QPushButton:checked {{ background-color: {self.config.get('accent_color', '#0d6efd')}; }}
+                        QPushButton:hover {{ border-color: {self.config.get('accent_color', '#0d6efd')}; }}
+                    """)
+                else:
+                    # Image icon
+                    if Path(icon_data).exists():
+                        pixmap = QPixmap(icon_data)
+                        if not pixmap.isNull():
+                            self.button.setIcon(QIcon(pixmap))
+                            self.button.setIconSize(pixmap.scaled(icon_size, icon_size, Qt.AspectRatioMode.KeepAspectRatio).size())
+            return
+
+        # Normal flow with text visible
         if not icon_data:
             # No icon, just text
             self.button.setText(display_name)

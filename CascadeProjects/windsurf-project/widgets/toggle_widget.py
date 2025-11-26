@@ -1,5 +1,5 @@
 from PyQt6.QtWidgets import QLabel, QWidget, QHBoxLayout, QAbstractButton
-from PyQt6.QtCore import Qt, QPropertyAnimation, QEasingCurve, QRectF
+from PyQt6.QtCore import Qt, QPropertyAnimation, QEasingCurve, QRectF, pyqtProperty
 from PyQt6.QtGui import QPainter, QColor, QBrush
 from .resizable_widget import ResizableWidget
 
@@ -100,15 +100,22 @@ class ToggleWidget(ResizableWidget):
     def apply_config(self):
         super().apply_config()
         self.toggle_label.setText(self.config.get('display_name', self.topic))
-        
+
         on_color = self.config.get('accent_color', '#0d6efd')
         off_color = self.config.get('toggle_off_color', '#6c757d')
         handle_color = self.config.get('toggle_handle_color', '#ffffff')
         self.toggle_switch.set_colors(on_color, off_color, handle_color)
-        
+
         text_color = self.config.get('text_color', '#D9D9D9')
         font_size = int(self.config.get('font_size', 12))
         self.toggle_label.setStyleSheet(f"color: {text_color}; font-size: {font_size}px;")
+
+        # Show/hide label based on config
+        show_text = self.config.get('show_text', True)
+        if show_text:
+            self.toggle_label.show()
+        else:
+            self.toggle_label.hide()
 
     def get_value(self):
         return str(self.toggle_switch.isChecked())

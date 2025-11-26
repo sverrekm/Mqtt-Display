@@ -65,6 +65,13 @@ class LabelWidget(ResizableWidget):
         font_size = int(self.config.get('font_size', 16))
         self.value_label.setStyleSheet(f"color: {text_color}; font-size: {font_size}px; font-weight: bold;")
 
+        # Show/hide value label based on config
+        show_text = self.config.get('show_text', True)
+        if show_text:
+            self.value_label.show()
+        else:
+            self.value_label.hide()
+
         # Update icon display for left/right positions
         self._update_content_icon()
 

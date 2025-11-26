@@ -82,10 +82,14 @@ class WidgetCustomizationDialog(QDialog):
         self.text_color_btn.clicked.connect(lambda: self._choose_color('text_color'))
         self.border_color_btn.clicked.connect(lambda: self._choose_color('border_color'))
         
-        if self.widget_type in ['gauge', 'slider', 'toggle']:
+        if self.widget_type in ['gauge', 'slider', 'toggle', 'button']:
             self.accent_color_btn = QPushButton()
             layout.addRow("Accent Color:", self.accent_color_btn)
             self.accent_color_btn.clicked.connect(lambda: self._choose_color('accent_color'))
+        if self.widget_type == 'button':
+            self.button_bg_color_btn = QPushButton()
+            layout.addRow("Button Background Color:", self.button_bg_color_btn)
+            self.button_bg_color_btn.clicked.connect(lambda: self._choose_color('button_bg_color'))
         if self.widget_type == 'toggle':
             self.toggle_off_color_btn = QPushButton()
             self.toggle_handle_color_btn = QPushButton()
@@ -248,6 +252,7 @@ class WidgetCustomizationDialog(QDialog):
         load_color('text_color', '#D9D9D9')
         load_color('border_color', '#2F3338')
         if hasattr(self, 'accent_color_btn'): load_color('accent_color', '#0d6efd')
+        if hasattr(self, 'button_bg_color_btn'): load_color('button_bg_color', '#343a40')
         if hasattr(self, 'toggle_off_color_btn'): load_color('toggle_off_color', '#6c757d')
         if hasattr(self, 'toggle_handle_color_btn'): load_color('toggle_handle_color', '#ffffff')
 

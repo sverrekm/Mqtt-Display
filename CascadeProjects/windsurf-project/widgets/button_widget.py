@@ -64,12 +64,13 @@ class ButtonWidget(ResizableWidget):
 
         # Basic styling
         accent_color = self.config.get('accent_color', '#0d6efd')
+        button_bg_color = self.config.get('button_bg_color', '#343a40')
         text_color = self.config.get('text_color', '#D9D9D9')
         font_size = self.config.get('font_size', 12)
 
         self.button.setStyleSheet(f"""
             QPushButton {{
-                background-color: #343a40;
+                background-color: {button_bg_color};
                 color: {text_color};
                 border: 1px solid #6c757d;
                 padding: 8px;
@@ -100,17 +101,19 @@ class ButtonWidget(ResizableWidget):
                     # Text icon (emoji)
                     self.button.setText(icon_data)
                     text_color = self.config.get('text_color', '#D9D9D9')
+                    button_bg_color = self.config.get('button_bg_color', '#343a40')
+                    accent_color = self.config.get('accent_color', '#0d6efd')
                     self.button.setStyleSheet(f"""
                         QPushButton {{
-                            background-color: #343a40;
+                            background-color: {button_bg_color};
                             color: {text_color};
                             border: 1px solid #6c757d;
                             padding: 8px;
                             border-radius: 4px;
                             font-size: {icon_size}px;
                         }}
-                        QPushButton:checked {{ background-color: {self.config.get('accent_color', '#0d6efd')}; }}
-                        QPushButton:hover {{ border-color: {self.config.get('accent_color', '#0d6efd')}; }}
+                        QPushButton:checked {{ background-color: {accent_color}; }}
+                        QPushButton:hover {{ border-color: {accent_color}; }}
                     """)
                 else:
                     # Image icon
@@ -134,17 +137,19 @@ class ButtonWidget(ResizableWidget):
                 # For text icons, we need to use text with large font
                 self.button.setText(icon_data)
                 text_color = self.config.get('text_color', '#D9D9D9')
+                button_bg_color = self.config.get('button_bg_color', '#343a40')
+                accent_color = self.config.get('accent_color', '#0d6efd')
                 self.button.setStyleSheet(f"""
                     QPushButton {{
-                        background-color: #343a40;
+                        background-color: {button_bg_color};
                         color: {text_color};
                         border: 1px solid #6c757d;
                         padding: 8px;
                         border-radius: 4px;
                         font-size: {icon_size}px;
                     }}
-                    QPushButton:checked {{ background-color: {self.config.get('accent_color', '#0d6efd')}; }}
-                    QPushButton:hover {{ border-color: {self.config.get('accent_color', '#0d6efd')}; }}
+                    QPushButton:checked {{ background-color: {accent_color}; }}
+                    QPushButton:hover {{ border-color: {accent_color}; }}
                 """)
             else:
                 # Image icon
